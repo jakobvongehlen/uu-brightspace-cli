@@ -561,6 +561,76 @@ def cmd_deadlines(ctx: BrowserContext, args) -> int:
 
 def cmd_sync(ctx: BrowserContext, args) -> int:
     """Download ALL course content files to a local directory."""
+    status, _, _ = _sync_course(ctx, args, args.org_unit, args.output)
+    return status
+
+def cmd_sync_all(ctx: BrowserContext, args) -> int:
+    """Sync every enrolled course offering, optionally restricted by id."""
+    token = _get_token(ctx, args)
+    if not token:
+        return 1
+    data = api_fetch(ctx,
+        f"{BASE_URL}/d2l/api/lp/1.43/enrollments/myenrollments/", token)
+    items = data.get("Items") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        print("[SYNC-ALL] Enrollment fetch failed or returned invalid data.", file=sys.stderr)
+        return 1
+
+    only = ({ou.strip() for ou in args.only.split(",") if ou.strip()}
+            if args.only is not None else None)
+    courses = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        org = item.get("OrgUnit")
+        if not isinstance(org, dict):
+            continue
+        org_type = org.get("Type")
+        if not isinstance(org_type, dict) or org_type.get("Id") != 3:
+            continue
+        if org.get("Id") is None:
+            continue
+        ou = str(org["Id"])
+        if ou in seen or (only is not None and ou not in only):
+            continue
+        seen.add(ou)
+        courses.append((ou, org))
+
+    if args.dry_run:
+        print(f"\n{'Code':<12} {'Name':<45} {'OrgUnitId'}")
+        print("-" * 75)
+        for ou, org in courses:
+            print(f"{org.get('Code') or '':<12} {org.get('Name') or '':<45} {ou}")
+        print(f"{len(courses)} course(s) would be synced.")
+        return 0
+
+    results = []
+    failed = False
+    for ou, org in courses:
+        print(f"[SYNC-ALL] {org.get('Code') or ''} {org.get('Name') or ''} ({ou})",
+              file=sys.stderr)
+        try:
+            status, downloaded, skipped = _sync_course(ctx, args, ou, args.output)
+            result = (f"{downloaded} downloaded, {skipped} skipped"
+                      if status == 0 else "error: sync failed (see log)")
+            failed = failed or status != 0
+        except Exception as e:
+            result = f"error: {e}"
+            failed = True
+        if result.startswith("error:"):
+            print(f"[SYNC-ALL] {ou}: {result}", file=sys.stderr)
+        results.append((ou, result))
+
+    print("\nSync summary:")
+    for ou, result in results:
+        print(f"{ou} -> {result}")
+    if not results:
+        print("No matching enrolled courses.")
+    return 1 if failed else 0
+
+def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> tuple[int, int, int]:
+    """Download ALL course content files to a local directory."""
     if not args.password or not args.totp:
         args.password = os.environ.get("BRIGHTSPACE_PASSWORD", "")
         args.totp     = os.environ.get("BRIGHTSPACE_TOTP_SECRET", "")
@@ -594,7 +664,7 @@ def cmd_sync(ctx: BrowserContext, args) -> int:
     if not token:
         if not args.password or not args.totp:
             print("ERROR: --password and --totp required for sync (no authenticated session).", file=sys.stderr)
-            return 1
+            return 1, 0, 0
         print("[SYNC] Session expired — fresh login...", file=sys.stderr)
         do_login(ctx, args.solisid, args.password, args.totp)
         # Do not re-navigate — do_login already lands on /d2l/home
@@ -606,11 +676,10 @@ def cmd_sync(ctx: BrowserContext, args) -> int:
         token = fresh_token or (load_token() or {}).get("token", "")
         if not token:
             print("[SYNC] Token extraction failed.", file=sys.stderr)
-            return 1
+            return 1, 0, 0
     print(f"[SYNC] Session ready.", file=sys.stderr)
 
-    ou = args.org_unit
-    base_dir = Path(args.output or
+    base_dir = Path(output or
                     str(SCRIPT_DIR.parent / "brightspace_sync")).resolve()
     out_dir = base_dir / ou
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -719,7 +788,7 @@ def cmd_sync(ctx: BrowserContext, args) -> int:
     toc = api_fetch(ctx, f"{BASE_URL}/d2l/api/le/1.57/{ou}/content/toc", token)
     if not toc:
         print("[SYNC] TOC fetch failed.", file=sys.stderr)
-        return 1
+        return 1, 0, 0
     modules = toc.get("Modules", [])
     print(f"[SYNC] {len(modules)} top-level modules", file=sys.stderr)
 
@@ -946,7 +1015,7 @@ def cmd_sync(ctx: BrowserContext, args) -> int:
         except Exception:
             pass
 
-    return 0
+    return 0, n_files, skipped
 
 # ── Token helper ───────────────────────────────────────────────────────────────
 def _get_token(ctx: BrowserContext, args) -> Optional[str]:
@@ -987,9 +1056,16 @@ def main():
     syn.add_argument("--org-unit", default=os.environ.get("BRIGHTSPACE_ORG_UNIT"))
     syn.add_argument("-o", "--output",   default=None)
 
+    syn_all = sub.add_parser("sync-all", help="Sync every enrolled course")
+    syn_all.add_argument("-o", "--output", default=None)
+    syn_all.add_argument("--only", metavar="ID[,ID...]",
+                         help="Restrict to these comma-separated org-unit ids")
+    syn_all.add_argument("--dry-run", action="store_true",
+                         help="List selected courses without downloading content")
+
     args = p.parse_args()
 
-    if args.cmd not in ("login", "courses") and not args.org_unit:
+    if args.cmd not in ("login", "courses", "sync-all") and not args.org_unit:
         p.error("--org-unit or BRIGHTSPACE_ORG_UNIT required for content commands")
     if args.cmd == "login" and not args.token and not args.solisid:
         p.error("--solisid or BRIGHTSPACE_SOLISID required for login")
@@ -1067,6 +1143,7 @@ def main():
             "schedule":    cmd_schedule,
             "deadlines":   cmd_deadlines,
             "sync":        cmd_sync,
+            "sync-all":    cmd_sync_all,
         }
         sys.exit(cmds[args.cmd](ctx, args))
 
