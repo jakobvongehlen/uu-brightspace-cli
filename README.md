@@ -2,6 +2,28 @@
 
 Headless Brightspace (D2L) course-sync CLI (Playwright).
 
+Log in with your SolisID + MFA (TOTP) and mirror the full contents of your enrolled
+Brightspace courses — slides, PDFs, documents, assignment instructions, files linked
+from inside pages, and schedules — to a local directory. You can also query your
+courses, assignments, grades, and announcements from the command line.
+
+## Features
+
+- **Download an entire course** — `sync` walks every module and topic and mirrors the
+  content to disk: file attachments (PDF, PPTX, DOCX, XLSX, …), inline content pages,
+  and assignment instructions with the files they link to.
+- **Follow linked files** — it also downloads files referenced from inside saved content
+  pages (e.g. a lecture PDF embedded in a page), so you get the whole module, not just
+  the top-level entries.
+- **Schedules and deadlines** — detects Google Sheets schedules linked in course content,
+  downloads them as CSV, and merges their deadlines with native Brightspace dropbox due dates.
+- **Incremental** — files already on disk are skipped, so re-running a sync is cheap.
+- **Headless authentication over MFA** — logs in non-interactively with SolisID + TOTP and
+  caches the browser session and bearer token.
+- **Course queries** — list enrolled courses, a course's table of contents, assignments
+  (dropbox + LTI links), grades, and announcements.
+- **Docker-ready** — build the bundled image and run it with your env and a mounted state volume.
+
 ## Requirements and install
 
 Python 3.10+, pip, and Chromium with its system dependencies.
@@ -40,8 +62,15 @@ python3 brightspace-cli.py grades                # Show grades
 python3 brightspace-cli.py news                  # Show announcements
 python3 brightspace-cli.py schedule -o ./output  # Download linked Google Sheets
 python3 brightspace-cli.py deadlines             # Show upcoming deadlines
-python3 brightspace-cli.py sync -o ./output      # Sync course content
+python3 brightspace-cli.py sync -o ./output      # Download ALL contents of the course
 ```
+
+`sync` downloads the **entire** course. It walks every module and topic and mirrors the
+content into `<output>/<org-unit>/`: file attachments (PDF, PPTX, DOCX, XLSX, …), inline
+content pages, files linked from inside those pages, assignment instructions, and any
+Google Sheets schedules. Point it at a course with `--org-unit <id>` (or set
+`BRIGHTSPACE_ORG_UNIT`), and re-run any time — files already downloaded are skipped, so
+you can keep a local copy of every enrolled course up to date.
 
 Run `python3 brightspace-cli.py --help` for global options, or append `--help`
 to a subcommand for its options.
