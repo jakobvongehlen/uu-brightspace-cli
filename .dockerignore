@@ -1,0 +1,15 @@
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+*.bak
+*.bak.*
+session/
+token.json
+.env
+*.env
+brightspace_sync/
+*.brightspace_md/
+output/
+Dockerfile
+.dockerignore
