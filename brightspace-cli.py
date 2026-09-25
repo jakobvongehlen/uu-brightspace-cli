@@ -565,7 +565,7 @@ def cmd_sync(ctx: BrowserContext, args) -> int:
     return status
 
 def cmd_sync_all(ctx: BrowserContext, args) -> int:
-    """Sync every enrolled course offering, optionally restricted by id."""
+    """Sync every enrolled course offering."""
     token = _get_token(ctx, args)
     if not token:
         return 1
@@ -576,8 +576,6 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
         print("[SYNC-ALL] Enrollment fetch failed or returned invalid data.", file=sys.stderr)
         return 1
 
-    only = ({ou.strip() for ou in args.only.split(",") if ou.strip()}
-            if args.only is not None else None)
     courses = []
     seen = set()
     for item in items:
@@ -592,7 +590,7 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
         if org.get("Id") is None:
             continue
         ou = str(org["Id"])
-        if ou in seen or (only is not None and ou not in only):
+        if ou in seen:
             continue
         seen.add(ou)
         courses.append((ou, org))
@@ -1058,8 +1056,6 @@ def main():
 
     syn_all = sub.add_parser("sync-all", help="Sync every enrolled course")
     syn_all.add_argument("-o", "--output", default=None)
-    syn_all.add_argument("--only", metavar="ID[,ID...]",
-                         help="Restrict to these comma-separated org-unit ids")
     syn_all.add_argument("--dry-run", action="store_true",
                          help="List selected courses without downloading content")
 

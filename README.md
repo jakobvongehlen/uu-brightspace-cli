@@ -15,7 +15,7 @@ courses, assignments, grades, and announcements from the command line.
   content to disk: file attachments (PDF, PPTX, DOCX, XLSX, …), inline content pages,
   and assignment instructions with the files they link to.
 - **Sync every enrolled course** - `sync-all` skips group/team sections and supports
-  `--only` and `--dry-run`.
+  `--dry-run` and `-o/--output`.
 - **Follow linked files** - it also downloads files referenced from inside saved content
   pages (e.g. a lecture PDF embedded in a page), so you get the whole module, not just
   the top-level entries.
@@ -69,7 +69,6 @@ python3 brightspace-cli.py deadlines             # Show upcoming deadlines
 python3 brightspace-cli.py sync -o ./output      # Download ALL contents of the course
 python3 brightspace-cli.py sync-all -o ./output  # Sync every enrolled course
 python3 brightspace-cli.py sync-all --dry-run    # Preview courses without downloading
-python3 brightspace-cli.py sync-all --only "$BRIGHTSPACE_ORG_UNIT" -o ./output
 ```
 
 `sync` downloads the **entire** course. It walks every module and topic and mirrors the
@@ -80,7 +79,7 @@ Google Sheets schedules. Point it at a course with `--org-unit <id>` (or set
 you can keep a local copy of every enrolled course up to date.
 
 `sync-all` discovers enrolled course offerings automatically and uses the same output
-layout as `sync`. Use `--only ID[,ID...]` to restrict the selection. It continues if a
+layout as `sync`. It continues if a
 course fails, prints a per-course summary, and exits nonzero if any course failed.
 
 Run `python3 brightspace-cli.py --help` for global options, or append `--help`
