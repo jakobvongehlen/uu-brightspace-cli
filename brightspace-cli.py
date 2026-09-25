@@ -245,7 +245,13 @@ def api_fetch(ctx: BrowserContext, url: str, token: str,
                     {{ headers: {{ "Authorization": "Bearer {token}",
                                    "Accept": "application/json" }} }}
                 );
-                return r.json();
+                const text = await r.text();
+                if (r.status === 204 || !text.trim()) return null;
+                try {{
+                    return JSON.parse(text);
+                }} catch {{
+                    return null;
+                }}
             }}
         """)
         return data
