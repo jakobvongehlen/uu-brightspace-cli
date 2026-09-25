@@ -55,7 +55,7 @@ at the configured paths; keep these files outside the repository.
 
 ## Usage
 
-Single-course content commands below use `BRIGHTSPACE_ORG_UNIT`.
+Single-course commands below (including `sync`) require the course's org-unit id, passed as `--org-unit <id>` or set via `BRIGHTSPACE_ORG_UNIT`; without it, `sync` exits with an error.
 
 ```sh
 python3 brightspace-cli.py login                 # Authenticate and cache a token
@@ -66,17 +66,17 @@ python3 brightspace-cli.py grades                # Show grades
 python3 brightspace-cli.py news                  # Show announcements
 python3 brightspace-cli.py schedule -o ./output  # Download linked Google Sheets
 python3 brightspace-cli.py deadlines             # Show upcoming deadlines
-python3 brightspace-cli.py sync -o ./output      # Download ALL contents of the course
+python3 brightspace-cli.py sync --org-unit <id> -o ./output  # Download ALL contents of ONE course (id required)
 python3 brightspace-cli.py sync-all -o ./output  # Sync every enrolled course
 python3 brightspace-cli.py sync-all --dry-run    # Preview courses without downloading
 ```
 
-`sync` downloads the **entire** course. It walks every module and topic and mirrors the
-content into `<output>/<org-unit>/`: file attachments (PDF, PPTX, DOCX, XLSX, …), inline
-content pages, files linked from inside those pages, assignment instructions, and any
-Google Sheets schedules. Point it at a course with `--org-unit <id>` (or set
-`BRIGHTSPACE_ORG_UNIT`), and re-run any time - files already downloaded are skipped, so
-you can keep a local copy of every enrolled course up to date.
+`sync` downloads the **entire** course, so you must tell it which one:
+`python3 brightspace-cli.py sync --org-unit <id> -o ./output` (or set `BRIGHTSPACE_ORG_UNIT`).
+It walks every module and topic and mirrors the content into `<output>/<org-unit>/`: file
+attachments (PDF, PPTX, DOCX, XLSX, …), inline content pages, files linked from inside those
+pages, assignment instructions, and any Google Sheets schedules. Re-run any time - files
+already downloaded are skipped, so you can keep a local copy of the course up to date.
 
 `sync-all` discovers enrolled course offerings automatically and uses the same output
 layout as `sync`. It continues if a
