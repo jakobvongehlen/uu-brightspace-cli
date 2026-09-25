@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets & credentials
+.env
+*.env
+token.json
+auth.json
+*.key
+*.pem
+
+# Playwright/Brightspace session state
+session/
+*.session
+.brightspace/
+brightspace/
+
+# Local output / course downloads
+brightspace_sync/
+*.brightspace_md/
+output/
+
+# Backups
+*.bak
+*.bak.*
+*~
+
+# OS
+.DS_Store
