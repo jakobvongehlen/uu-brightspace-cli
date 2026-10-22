@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
+  <title id="title">UU CLI</title>
+  <desc id="desc">Utrecht University platforms from the terminal: Brightspace, Konjoin and journal articles.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16181f"/>
+      <stop offset="1" stop-color="#0d0e12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.2" r="0.6">
+      <stop offset="0" stop-color="#f5b301" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#f5b301" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    <clipPath id="card"><rect width="1200" height="380" rx="20"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="380" fill="url(#bg)"/>
+    <rect width="1200" height="380" fill="url(#dots)"/>
+    <rect width="1200" height="380" fill="url(#glow)"/>
+  </g>
+  <rect x="0.5" y="0.5" width="1199" height="379" rx="19.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <!-- Left: name, tagline, services -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+    <text x="64" y="150" font-size="84" font-weight="700" fill="#f5b301">❯</text>
+    <text x="140" y="150" font-size="84" font-weight="700" fill="#f4f4f5">uu<tspan fill="#f5b301">_</tspan></text>
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <text x="66" y="206" font-size="24" fill="#d4d4d8">Utrecht University platforms,</text>
+    <text x="66" y="238" font-size="24" fill="#d4d4d8">from your terminal.</text>
+
+    <g font-size="15" font-weight="600">
+      <rect x="66" y="276" width="118" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
+      <text x="125" y="298" text-anchor="middle" fill="#f5c542">Brightspace</text>
+      <rect x="196" y="276" width="96" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
+      <text x="244" y="298" text-anchor="middle" fill="#f5c542">Konjoin</text>
+      <rect x="304" y="276" width="88" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
+      <text x="348" y="298" text-anchor="middle" fill="#f5c542">Papers</text>
+    </g>
+    <text x="66" y="338" font-size="14" fill="#71717a">One Solis-id login · unofficial, not affiliated with Utrecht University</text>
+  </g>
+
+  <!-- Right: terminal window -->
+  <g transform="translate(600 44)">
+    <rect width="552" height="292" rx="12" fill="#0a0b0e" stroke="#2a2d36"/>
+    <path d="M12 0h528a12 12 0 0 1 12 12v24H0V12A12 12 0 0 1 12 0z" fill="#1c1e25"/>
+    <circle cx="22" cy="18" r="6" fill="#ff5f57"/>
+    <circle cx="42" cy="18" r="6" fill="#febc2e"/>
+    <circle cx="62" cy="18" r="6" fill="#28c840"/>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14.5" fill="#d4d4d8">
+      <text x="22" y="68"><tspan fill="#f5b301">$</tspan> uu brightspace deadlines</text>
+      <text x="22" y="92"><tspan fill="#a1a1aa">Fri 24 Oct 23:59</tspan>  Essay draft · Philosophy of Mind</text>
+      <text x="22" y="114"><tspan fill="#a1a1aa">Mon 27 Oct 17:00</tspan>  Lab report 3 · Neuroscience</text>
+
+      <text x="22" y="152"><tspan fill="#f5b301">$</tspan> uu konjoin projects --search neuro</text>
+      <text x="22" y="176"><tspan fill="#4ade80">Open</tspan>     Memory consolidation in sleep</text>
+      <text x="22" y="198"><tspan fill="#a1a1aa">38 projects</tspan></text>
+
+      <text x="22" y="236"><tspan fill="#f5b301">$</tspan> uu papers open 10.1016/j.knosys.2025.113564</text>
+      <text x="22" y="260"><tspan fill="#4ade80">Saved:</tspan> 10.1016_j.knosys.2025.113564.pdf</text>
+    </g>
+  </g>
+</svg>

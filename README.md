@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="uu: Utrecht University platforms from your terminal (Brightspace, Konjoin, Papers)" width="100%">
+</p>
+
 # UU CLI
 
 Headless CLI for Utrecht University platforms, logged in with your Solis-id:
