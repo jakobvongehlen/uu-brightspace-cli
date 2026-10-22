@@ -18,7 +18,7 @@ API = "https://api.elsevier.com/content/article"
 NO_ACCESS = ("Elsevier doesn't count this request as UU's, so there's no full text. From UU's "
              "network (on campus or eduroam) it should work; elsewhere it needs an institutional "
              "token (ELSEVIER_INSTTOKEN), which only the library can request. "
-             "`uu papers open <doi>` works from anywhere.")
+             "`uu library open <doi>` works from anywhere.")
 ERRORS = {
     400: "Elsevier didn't understand the request; is the DOI complete?",
     401: "Elsevier didn't accept the API key in ELSEVIER_API_KEY.",

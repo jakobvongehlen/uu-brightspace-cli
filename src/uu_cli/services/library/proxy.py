@@ -21,7 +21,7 @@ from playwright.sync_api import (
 )
 
 from uu_cli import browser
-from uu_cli.services.papers.articles import doi_of, save_pdf
+from uu_cli.services.library.articles import doi_of, save_pdf
 
 PROXY = "https://utrechtuniversity.idm.oclc.org"
 

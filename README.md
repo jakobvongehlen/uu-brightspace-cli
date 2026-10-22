@@ -7,7 +7,7 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   lists courses, assignments, deadlines, grades and announcements.
 - **[Konjoin](https://uu.konjoin.nl)** (`uu konjoin`): lists and searches research,
   thesis and internship projects, shows a project's details and exports them all to JSON.
-- **Journal articles** (`uu papers`): opens an article through UU's library in a browser
+- **Library** (`uu library`): journal articles. Opens an article through UU's library in a browser
   window and saves the PDF you, or the window itself, open there, or downloads Elsevier
   articles through Elsevier's API.
 
@@ -18,7 +18,7 @@ flowchart LR
     window["You log in yourself in a browser window,<br/>with the code from your authenticator app<br/>--auth browser"] --> cli
     cli["uu-brightspace-cli<br/>one UU login, one shared session"] --> brightspace["Brightspace<br/>uu brightspace …"]
     cli --> konjoin["Konjoin<br/>uu konjoin …"]
-    cli --> papers["Articles through UU's library<br/>uu papers …"]
+    cli --> library["Articles through UU's library<br/>uu library …"]
 ```
 
 ## Features
@@ -178,15 +178,17 @@ Konjoin shows every logged-in user each person's email address and organisation 
 JSON output (`--json`, `export`) leaves both out, so an export isn't a list of everyone's
 contact details; add `--keep-contact-details` if you need them.
 
-### Articles
+### Library
 
 ```sh
-uu papers open 10.1016/j.knosys.2025.113564          # Through UU's library; the PDF you open is saved
-uu papers open https://link.springer.com/article/… -o papers/
-uu papers get 10.1016/j.knosys.2025.113564           # The same window, which opens the PDF itself
-uu papers watch -o papers/                           # get, for each DOI an AI agent adds to papers/wanted.txt
-uu papers elsevier 10.1016/j.knosys.2025.113564      # Elsevier's API (needs ELSEVIER_API_KEY)
+uu library open 10.1016/j.knosys.2025.113564         # Through UU's library; the PDF you open is saved
+uu library open https://link.springer.com/article/… -o papers/
+uu library get 10.1016/j.knosys.2025.113564          # The same window, which opens the PDF itself
+uu library watch -o papers/                          # get, for each DOI an AI agent adds to papers/wanted.txt
+uu library elsevier 10.1016/j.knosys.2025.113564     # Elsevier's API (needs ELSEVIER_API_KEY)
 ```
+
+`uu papers`, the old name, still works.
 
 `open` takes a DOI or the article's web address, turns it into a link through UU's
 library proxy (`utrechtuniversity.idm.oclc.org`, the same one the library's own links
@@ -226,7 +228,7 @@ The way around all three is `watch`, which you start in your own terminal, outsi
 agent's sandbox, and leave running:
 
 ```sh
-uu papers watch -o ~/thesis/literature/papers
+uu library watch -o ~/thesis/literature/papers
 ```
 
 The agent adds DOIs to `wanted.txt` in that folder, one per line (`#` starts a comment),
@@ -236,7 +238,7 @@ window on your screen, where you log in if UU asks. It takes only DOIs from the 
 opens only their doi.org links, so nothing an agent writes there can run or open another
 site. It fetches one article at a time, ten seconds apart, and stops after 25 (`--max`),
 so a list that keeps growing can't turn into systematic downloading. A DOI already in
-`watch.log` is skipped, also after a restart; to try one again, use `uu papers get`.
+`watch.log` is skipped, also after a restart; to try one again, use `uu library get`.
 
 Without `watch`, the agent gives you the command and the folder to save to, and reads
 the PDF from that folder once you've run it.
@@ -284,7 +286,7 @@ src/uu_cli/
   services/
     brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py, cli.py
     konjoin/           api.py (/api/project), commands.py, cli.py
-    papers/            library.py (the proxy, in a window), elsevier.py (the API),
+    library/           proxy.py (the proxy, in a window), elsevier.py (the API),
                        articles.py (DOIs, saved PDFs), cli.py
 brightspace-cli.py     the old entry point, kept for existing scripts and the Docker image
 tests/                 pytest suite; fake_uu.py is an offline stand-in for UU's login,

@@ -38,6 +38,15 @@ def test_konjoin_help_lists_every_command(state):
         assert command in result.stdout
 
 
+@pytest.mark.parametrize("service", ["library", "papers"])  # papers: the old name
+def test_library_help_lists_every_command(state, service):
+    result = cli("-m", "uu_cli", service, "--help", state=state)
+
+    assert result.returncode == 0
+    for command in ["open", "get", "watch", "elsevier"]:
+        assert command in result.stdout
+
+
 @pytest.mark.parametrize("entry", [["-m", "uu_cli", "brightspace"], ["brightspace-cli.py"]])
 def test_brightspace_help_lists_every_command(state, entry):
     result = cli(*entry, "--help", state=state)

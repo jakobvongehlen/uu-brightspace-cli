@@ -63,7 +63,7 @@ def fake_uu(monkeypatch) -> FakeUU:
 
 @pytest.fixture
 def window(request, fake_uu, monkeypatch):
-    """The window --auth browser and `uu papers open` open, headless here; returns the windows opened.
+    """The window --auth browser and `uu library open` open, headless here; returns the windows opened.
 
     By default you fill in UU's forms in it (and click "View PDF"); parametrize with False for a
     window nobody uses.

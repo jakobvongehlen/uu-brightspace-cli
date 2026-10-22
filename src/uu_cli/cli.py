@@ -12,12 +12,17 @@ from uu_cli import __version__
 SERVICES = {
     "brightspace": "uu_cli.services.brightspace.cli",
     "konjoin": "uu_cli.services.konjoin.cli",
-    "papers": "uu_cli.services.papers.cli",
+    "library": "uu_cli.services.library.cli",
 }
+
+# Old service names that keep working.
+ALIASES = {"papers": "library"}
 
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ALIASES:
+        argv = [ALIASES[argv[0]], *argv[1:]]
     if argv and argv[0] in SERVICES:
         service = importlib.import_module(SERVICES[argv[0]])
         service.main(argv[1:], prog=f"uu {argv[0]}")

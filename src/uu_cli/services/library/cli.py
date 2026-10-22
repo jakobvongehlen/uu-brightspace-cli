@@ -1,4 +1,4 @@
-"""`uu papers <command>`: articles from journals UU subscribes to."""
+"""`uu library <command>`: articles from journals UU subscribes to."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from uu_cli import auth, browser, paths
-from uu_cli.services.papers import articles, elsevier, library
+from uu_cli.services.library import articles, elsevier, proxy
 
 # Between two articles from Elsevier's API: one researcher's pace, not a crawler's.
 PAUSE_S = 1.0
@@ -125,7 +125,7 @@ def _settled(path: Path) -> bool:
 def _has_screen(cmd: str) -> bool:
     if auth.has_screen():
         return True
-    print(f"ERROR: `uu papers {cmd}` needs a screen to open its window on "
+    print(f"ERROR: `uu library {cmd}` needs a screen to open its window on "
           "(DISPLAY or WAYLAND_DISPLAY is not set).", file=sys.stderr)
     return False
 
@@ -135,7 +135,7 @@ def _in_window(url: str, doi: str | None, out: Path, session_dir: str, fetch: bo
     with sync_playwright() as pw:
         ctx = browser.launch(pw, session_dir)
         try:
-            return library.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch)
+            return proxy.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch)
         finally:
             browser.save_session(ctx, session_dir)
 
