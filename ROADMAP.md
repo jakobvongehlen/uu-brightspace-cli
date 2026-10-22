@@ -22,8 +22,8 @@ used at UU, and how it can be reached, before building on it.
   the terminal. Mostly public, so no login needed.
 - [ ] **Booking study spaces in the library**, if UU's booking system sits behind the UU
   login.
-- [ ] **Library catalogue search** (`uu papers search <query>`): pairs with
-  `uu papers open`, and only searches, so publishers' download terms don't come into it.
+- [ ] **Library catalogue search** (`uu library search <query>`): pairs with
+  `uu library open`, and only searches, so publishers' download terms don't come into it.
 
 ## Further out
 
