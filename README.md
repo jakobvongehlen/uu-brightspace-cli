@@ -17,7 +17,7 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
 
 ## Features
 
-- **Full course sync** of every module and topic, including files linked from inside pages.
+- **Full material download** of every module and topic, including files linked from inside pages.
 - **All courses at once** with `sync-all` (skips group/team sections).
 - **Deadlines** from Brightspace dropboxes merged with linked Google Sheets schedules.
 - **Incremental**: files already on disk are skipped.
