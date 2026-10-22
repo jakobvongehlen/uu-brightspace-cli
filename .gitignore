@@ -35,3 +35,6 @@ output/
 
 # OS
 .DS_Store
+
+# Crash dumps (Chromium can leave one after a test run)
+core.[0-9]*
