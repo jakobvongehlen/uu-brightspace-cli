@@ -304,6 +304,11 @@ python -m pytest
 The suite needs no account and no network. The browser tests drive the real CLI in
 Chromium against `tests/fake_uu.py` and are skipped when Chromium is not installed.
 
+## Roadmap
+
+What might come next (timetable, Osiris grades, calendar feeds, …) is in
+[ROADMAP.md](ROADMAP.md).
+
 ## Disclaimer
 
 Unofficial tool, not affiliated with or endorsed by Utrecht University, D2L, SURF,
