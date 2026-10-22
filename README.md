@@ -15,16 +15,6 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   window and saves the PDF you, or the window itself, open there, or downloads Elsevier
   articles through Elsevier's API.
 
-```mermaid
-flowchart LR
-    secret["TOTP secret on this device<br/>--auth totp-secret"] --> cli
-    prompt["Code from your authenticator app,<br/>typed in the terminal<br/>--auth prompt"] --> cli
-    window["You log in yourself in a browser window,<br/>with the code from your authenticator app<br/>--auth browser"] --> cli
-    cli["uu-brightspace-cli<br/>one UU login, one shared session"] --> brightspace["Brightspace<br/>uu brightspace …"]
-    cli --> konjoin["Konjoin<br/>uu konjoin …"]
-    cli --> library["Articles through UU's library<br/>uu library …"]
-```
-
 ## Features
 
 - **Full course sync** of every module and topic, including files linked from inside pages.
@@ -62,7 +52,12 @@ is the same as `uu brightspace <command>`.
 
 UU asks for your Solis-id, your password and a 6-digit code from your authenticator
 app. The CLI can answer the code step in two ways, or let you log in yourself, chosen
-with `--auth` (or `BRIGHTSPACE_AUTH`):
+with `--auth` (or `BRIGHTSPACE_AUTH`). Whichever you pick, the result is one UU session
+that every platform shares:
+
+<p align="center">
+  <img src="assets/login.svg" alt="Three ways through the code step (--auth prompt, totp-secret or browser) lead to one UU login, kept between runs and shared by Brightspace, Konjoin and Library" width="100%">
+</p>
 
 | `--auth` | The code comes from | Good for |
 |---|---|---|

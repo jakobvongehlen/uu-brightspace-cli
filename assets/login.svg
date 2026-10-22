@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title desc">
+  <title id="title">How uu logs in</title>
+  <desc id="desc">Three ways through UU's one-time-code step (--auth prompt, totp-secret or browser) lead to one UU session, which Brightspace, Konjoin and Library all share.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16181f"/>
+      <stop offset="1" stop-color="#0d0e12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.52" r="0.32">
+      <stop offset="0" stop-color="#f5b301" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#f5b301" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#f5b301" fill-opacity="0.7"/>
+    </marker>
+    <clipPath id="card"><rect width="1200" height="470" rx="20"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="470" fill="url(#bg)"/>
+    <rect width="1200" height="470" fill="url(#dots)"/>
+    <rect width="1200" height="470" fill="url(#glow)"/>
+  </g>
+  <rect x="0.5" y="0.5" width="1199" height="469" rx="19.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <!-- Column headings -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="1.5" fill="#a1a1aa">
+    <text x="40" y="52">1 · THE CODE STEP</text>
+    <text x="600" y="52" text-anchor="middle">2 · ONE UU LOGIN</text>
+    <text x="830" y="52">3 · EVERY PLATFORM</text>
+  </g>
+
+  <!-- Arrows: routes -> login -> platforms -->
+  <g fill="none" stroke="#f5b301" stroke-opacity="0.45" stroke-width="2" marker-end="url(#arrow)">
+    <path d="M370 124 C425 124 415 196 466 196"/>
+    <path d="M370 232 L466 232"/>
+    <path d="M370 340 C425 340 415 268 466 268"/>
+    <path d="M734 196 C785 196 775 124 826 124"/>
+    <path d="M734 232 L826 232"/>
+    <path d="M734 268 C785 268 775 340 826 340"/>
+  </g>
+
+  <!-- Left: how the code step is answered -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <g transform="translate(40 78)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="30" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="600" fill="#f5b301">--auth prompt</text>
+      <text x="20" y="56" font-size="17" font-weight="600" fill="#f4f4f5">Type the code from your app</text>
+      <text x="20" y="77" font-size="13.5" fill="#a1a1aa">Authy, Google Authenticator · everyday use</text>
+    </g>
+    <g transform="translate(40 186)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="30" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="600" fill="#f5b301">--auth totp-secret</text>
+      <text x="20" y="56" font-size="17" font-weight="600" fill="#f4f4f5">The CLI generates the code</text>
+      <text x="20" y="77" font-size="13.5" fill="#a1a1aa">From your TOTP secret · cron, Docker</text>
+    </g>
+    <g transform="translate(40 294)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="30" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="600" fill="#f5b301">--auth browser</text>
+      <text x="20" y="56" font-size="17" font-weight="600" fill="#f4f4f5">Log in yourself in a window</text>
+      <text x="20" y="77" font-size="13.5" fill="#a1a1aa">UU's own login page · needs a screen</text>
+    </g>
+    <text x="40" y="420" font-size="13.5" fill="#a1a1aa"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" fill="#d4d4d8">--auth auto</tspan> (default): the secret when one is set,</text>
+    <text x="40" y="440" font-size="13.5" fill="#a1a1aa">otherwise you type the code.</text>
+  </g>
+
+  <!-- Middle: the one UU login and its session -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" text-anchor="middle">
+    <rect x="470" y="132" width="260" height="200" rx="16" fill="#1f1a0c" stroke="#f5b301" stroke-opacity="0.6" stroke-width="1.5"/>
+    <text x="600" y="174" font-size="22" font-weight="700" fill="#f4f4f5">UU login</text>
+    <text x="600" y="200" font-size="14" fill="#d4d4d8">Solis-id · password · code</text>
+    <line x1="500" y1="222" x2="700" y2="222" stroke="#f5b301" stroke-opacity="0.25"/>
+    <text x="600" y="250" font-size="15" font-weight="600" fill="#f5c542">Session kept between runs</text>
+    <text x="600" y="274" font-size="13.5" fill="#a1a1aa">One code lasts until</text>
+    <text x="600" y="293" font-size="13.5" fill="#a1a1aa">UU ends the session</text>
+    <text x="600" y="316" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#71717a">cookies.json · owner-only</text>
+  </g>
+
+  <!-- Right: the platforms sharing that session -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <g transform="translate(830 78)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="34" font-size="18" font-weight="700" fill="#f4f4f5">Brightspace</text>
+      <text x="310" y="34" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#f5b301">uu brightspace</text>
+      <text x="20" y="64" font-size="13.5" fill="#a1a1aa">Courses, deadlines, grades,</text>
+      <text x="20" y="82" font-size="13.5" fill="#a1a1aa">announcements and course sync</text>
+    </g>
+    <g transform="translate(830 186)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="34" font-size="18" font-weight="700" fill="#f4f4f5">Konjoin</text>
+      <text x="310" y="34" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#f5b301">uu konjoin</text>
+      <text x="20" y="64" font-size="13.5" fill="#a1a1aa">Research, thesis and</text>
+      <text x="20" y="82" font-size="13.5" fill="#a1a1aa">internship projects</text>
+    </g>
+    <g transform="translate(830 294)">
+      <rect width="330" height="92" rx="12" fill="#1a1c23" stroke="#2a2d36"/>
+      <text x="20" y="34" font-size="18" font-weight="700" fill="#f4f4f5">Library</text>
+      <text x="310" y="34" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#f5b301">uu library</text>
+      <text x="20" y="64" font-size="13.5" fill="#a1a1aa">Journal articles through</text>
+      <text x="20" y="82" font-size="13.5" fill="#a1a1aa">UU's library</text>
+    </g>
+    <text x="830" y="420" font-size="13.5" fill="#a1a1aa">Logged in to one, logged in to all:</text>
+    <text x="830" y="440" font-size="13.5" fill="#a1a1aa">no second code while the session lasts.</text>
+  </g>
+</svg>
