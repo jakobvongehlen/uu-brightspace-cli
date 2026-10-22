@@ -37,8 +37,8 @@
       <text x="125" y="298" text-anchor="middle" fill="#f5c542">Brightspace</text>
       <rect x="196" y="276" width="96" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
       <text x="244" y="298" text-anchor="middle" fill="#f5c542">Konjoin</text>
-      <rect x="304" y="276" width="88" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
-      <text x="348" y="298" text-anchor="middle" fill="#f5c542">Papers</text>
+      <rect x="304" y="276" width="94" height="34" rx="17" fill="#f5b301" fill-opacity="0.12" stroke="#f5b301" stroke-opacity="0.5"/>
+      <text x="351" y="298" text-anchor="middle" fill="#f5c542">Library</text>
     </g>
     <text x="66" y="338" font-size="14" fill="#71717a">One Solis-id login · unofficial, not affiliated with Utrecht University</text>
   </g>
@@ -60,7 +60,7 @@
       <text x="22" y="176"><tspan fill="#4ade80">Open</tspan>     Memory consolidation in sleep</text>
       <text x="22" y="198"><tspan fill="#a1a1aa">38 projects</tspan></text>
 
-      <text x="22" y="236"><tspan fill="#f5b301">$</tspan> uu papers open 10.1016/j.knosys.2025.113564</text>
+      <text x="22" y="236"><tspan fill="#f5b301">$</tspan> uu library open 10.1016/j.knosys.2025.113564</text>
       <text x="22" y="260"><tspan fill="#4ade80">Saved:</tspan> 10.1016_j.knosys.2025.113564.pdf</text>
     </g>
   </g>

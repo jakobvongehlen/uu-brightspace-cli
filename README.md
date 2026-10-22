@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="uu: Utrecht University platforms from your terminal (Brightspace, Konjoin, Papers)" width="100%">
+  <img src="assets/banner.svg" alt="uu: Utrecht University platforms from your terminal (Brightspace, Konjoin, Library)" width="100%">
 </p>
 
 # UU CLI
