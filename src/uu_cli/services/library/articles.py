@@ -9,6 +9,9 @@ from urllib.parse import unquote
 # A DOI: "10.", a registrant code, "/", and a suffix running up to whitespace, a query or a fragment.
 DOI = re.compile(r"10\.\d{4,9}/[^\s?#]+")
 
+# What a file name can't hold: folder separators, Windows' reserved characters and whitespace.
+UNSAFE = re.compile(r'[\\/:*?"<>|\s]+')
+
 
 def doi_of(ref: str) -> str | None:
     """The DOI in ref (a bare DOI, doi:…, a doi.org link or a publisher link that has one), or None."""
@@ -33,11 +36,17 @@ def save_pdf(out_dir: Path, data: bytes, name: str) -> Path:
 
     The same PDF twice (a download and the page it opened in) ends up in one file.
     """
-    stem = re.sub(r'[\\/:*?"<>|\s]+', "_", name).strip("._") or "article"
+    return save_file(out_dir, data, name, ".pdf")
+
+
+def save_file(out_dir: Path, data: bytes, name: str, suffix: str) -> Path:
+    """Write data to out_dir/<name><suffix>, or <name>-2<suffix> and up when that holds other data."""
+    stem = UNSAFE.sub("_", name).strip("._") or "article"
+    suffix = UNSAFE.sub("_", suffix)
     out_dir.mkdir(parents=True, exist_ok=True)
     n = 1
     while True:
-        path = out_dir / (f"{stem}.pdf" if n == 1 else f"{stem}-{n}.pdf")
+        path = out_dir / (f"{stem}{suffix}" if n == 1 else f"{stem}-{n}{suffix}")
         if not path.exists():
             path.write_bytes(data)
             return path

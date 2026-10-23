@@ -6,7 +6,9 @@ CLI builds that link and opens it in a window with your UU session. With `open`,
 PDF and opening or downloading it is up to you, as on any other day; with `get`, the window
 opens the PDF the article page names in its citation_pdf_url tag (the one Google Scholar
 reads), and you take over when it can't. Every PDF opened or downloaded there is saved, so one
-window works for every publisher without code per publisher.
+window works for every publisher without code per publisher. A download that isn't a PDF (a
+whole issue as a ZIP) is kept too, but doesn't count as the article. The window says on stderr
+which pages it opens and what it downloads, so you can see where it got stuck.
 """
 
 from __future__ import annotations
@@ -17,11 +19,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import (
-    BrowserContext, Download, Error as PlaywrightError, Page, Response,
+    BrowserContext, Download, Error as PlaywrightError, Frame, Page, Response,
 )
 
 from uu_cli import browser
-from uu_cli.services.library.articles import doi_of, save_pdf
+from uu_cli.services.library.articles import doi_of, save_file, save_pdf
 
 PROXY = "https://utrechtuniversity.idm.oclc.org"
 
@@ -45,20 +47,29 @@ def proxy_url(article: str) -> str:
 
 
 def open_article(ctx: BrowserContext, article: str, out_dir: Path, doi: str | None,
-                 keep_open: bool = False, fetch: bool = False) -> list[Path]:
-    """Open article through the proxy in a window with ctx's session; returns the PDFs saved.
+                 keep_open: bool = False,
+                 fetch: bool = False) -> tuple[list[Path], list[Path]]:
+    """Open article through the proxy in a window with ctx's session; returns the PDFs saved,
+    and the other files downloaded there.
 
     fetch: once the article page is there, open the PDF it names in a tab of the window (`get`).
     A PDF is named after its own DOI when its address has one, else after the article's doi:
-    a chapter page can also offer the whole book. The window closes once a PDF is saved (unless
-    keep_open), when you close it, or after WINDOW_TIMEOUT_S. Its session goes back into ctx, so
-    the next run skips the logins.
+    a chapter page can also offer the whole book. A download that isn't a PDF keeps its own
+    name and leaves the window open. The window closes once a PDF is saved (unless keep_open),
+    when you close it, or after WINDOW_TIMEOUT_S. Its session goes back into ctx, so the next
+    run skips the logins.
     """
     window = browser.open_window(ctx)
     found: list[Download | Response] = []  # saved from the loop below, not from the handlers
-    window.on("page", lambda page: page.on("download", lambda d: found.append(d)))
+
+    def watch(page: Page) -> None:
+        page.on("download", lambda d: found.append(d))
+        page.on("framenavigated", lambda frame: _say_where(frame) if not frame.parent_frame else None)
+
+    window.on("page", watch)
     window.on("response", lambda r: found.append(r) if _is_pdf(r) else None)
     saved: list[Path] = []
+    others: list[Path] = []  # downloads that aren't a PDF
     fetched_at = 0.0  # when `get` opened the PDF; 0 while it hasn't
     try:
         page = window.new_page()
@@ -68,7 +79,7 @@ def open_article(ctx: BrowserContext, article: str, out_dir: Path, doi: str | No
             while found:
                 item = found.pop(0)
                 own = doi_of(item.url)
-                path = _save(item, window, out_dir, own or doi or "article")
+                path = _save(item, window, out_dir, own or doi or "article", others)
                 if path and path not in saved:
                     saved.append(path)
                     print(f"Saved: {path}")
@@ -102,9 +113,19 @@ def open_article(ctx: BrowserContext, article: str, out_dir: Path, doi: str | No
     finally:
         try:
             window.browser.close()
-        except PlaywrightError:
+        except Exception:  # Ctrl+C stops Playwright's driver too: then there's nothing to close
             pass
-    return saved
+    return saved, others
+
+
+def _say_where(frame: Frame) -> None:
+    print(f"[LIBRARY] Page: {_where(frame.url)}", file=sys.stderr)
+
+
+def _where(url: str) -> str:
+    """url without its query, which can hold a login ticket or a signed download link."""
+    parts = urlparse(url)
+    return f"{parts.netloc}{parts.path}" if parts.netloc else url
 
 
 def _citation_pdf(pages: list[Page]) -> str | None:
@@ -136,8 +157,14 @@ def _is_pdf(response: Response) -> bool:
     return response.status == 200 and content_type.split(";")[0].strip() == "application/pdf"
 
 
-def _save(item: Download | Response, window: BrowserContext, out_dir: Path, name: str) -> Path | None:
-    """Save a download or a PDF that opened in a tab; None when it turns out not to be a PDF."""
+def _save(item: Download | Response, window: BrowserContext, out_dir: Path, name: str,
+          others: list[Path]) -> Path | None:
+    """Save a download or a PDF that opened in a tab; None when it turns out not to be a PDF.
+
+    A download that isn't a PDF is kept under its own name and added to others.
+    """
+    if isinstance(item, Download):
+        print(f"[LIBRARY] Download: {item.suggested_filename}", file=sys.stderr)
     try:
         if isinstance(item, Download):
             data = Path(item.path()).read_bytes()
@@ -146,6 +173,29 @@ def _save(item: Download | Response, window: BrowserContext, out_dir: Path, name
                 data = item.body()
             except PlaywrightError:  # shown in Chromium's PDF viewer: fetch it once more
                 data = window.request.get(item.url).body()
-    except (PlaywrightError, OSError, TypeError):
+    except (PlaywrightError, OSError, TypeError) as err:
+        print(f"[LIBRARY] Couldn't read {_where(item.url)}: {err}", file=sys.stderr)
         return None
-    return save_pdf(out_dir, data, name) if data.startswith(b"%PDF") else None
+    if data.startswith(b"%PDF"):
+        return save_pdf(out_dir, data, name)
+    if not isinstance(item, Download):
+        print(f"[LIBRARY] Skipped {_where(item.url)}: sent as a PDF, but it's {_kind(data)}.",
+              file=sys.stderr)
+        return None
+    own = Path(item.suggested_filename)
+    path = save_file(out_dir, data, own.stem, own.suffix)
+    if path not in others:
+        others.append(path)
+        print(f"[LIBRARY] Kept {path}: it's {_kind(data)}, not a PDF, so it isn't the article. "
+              "Open the article's own PDF in the window, or close it.", file=sys.stderr)
+    return None
+
+
+def _kind(data: bytes) -> str:
+    """What a file that isn't a PDF looks like, for the message about it."""
+    size = f"{len(data) / 1e6:.1f} MB" if len(data) >= 100_000 else f"{len(data)} bytes"
+    if data.startswith(b"PK"):
+        return f"a ZIP archive ({size})"
+    if data.lstrip()[:1] == b"<":
+        return f"a web page ({size})"
+    return f"a file of {size}"

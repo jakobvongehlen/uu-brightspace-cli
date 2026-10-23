@@ -139,10 +139,13 @@ PROJECTS = [
 ]
 PER_PAGE = 2
 
-# An article behind the library proxy; "View PDF" opens the PDF in a new tab, as ScienceDirect does.
-ARTICLE = '{meta}<h1>A fake article</h1><a id="pdf" href="{pdf}" target="_blank">View PDF</a>'
+# An article behind the library proxy; "View PDF" opens the PDF in a new tab, as ScienceDirect does,
+# and "Download full issue" downloads the whole issue as a ZIP.
+ARTICLE = ('{meta}<h1>A fake article</h1><a id="pdf" href="{pdf}" target="_blank">View PDF</a>'
+           '<a id="issue" href="/issue/download">Download full issue</a>')
 CITATION_PDF = '<meta name="citation_pdf_url" content="{url}">'
 ARTICLE_PDF = b"%PDF-1.7\n% fake article\n"
+ISSUE_ZIP = b"PK\x03\x04% fake issue\n"
 
 # GitLab's sign-in page with its Solis-ID tab (LDAP), as served on 22-10-2026: GitLab's script
 # renders the password field into the placeholder after the page loads.
@@ -242,6 +245,7 @@ class FakeUU:
         self.article_pdf = "/article/main.pdf"  # where the article's "View PDF" link points
         self.citation_pdf_url: str | None = "/article/main.pdf"  # the page's tag for search engines
         self.clicks_pdf = True      # you, at the window, click "View PDF" (when by_hand)
+        self.clicks_issue = False   # you click "Download full issue" instead
         self.elsewhere: list[str] = []  # requests for hosts this fake doesn't serve (aborted)
         self.gitlab_logins = 0      # completed sign-ins at GitLab
         self.gitlab_two_factor = False  # you turned on GitLab's own two-factor login
@@ -394,13 +398,19 @@ class FakeUU:
             return route.fulfill(status=403, body="not logged in at the proxy")
         if path == "/article":
             meta = CITATION_PDF.format(url=self.citation_pdf_url) if self.citation_pdf_url else ""
-            # You, at the window: click "View PDF".
-            you = "<script>setTimeout(() => document.getElementById('pdf').click(), 300)</script>"
-            clicks = by_hand and self.clicks_pdf
+            # You, at the window: click "View PDF", or "Download full issue".
+            link = "issue" if self.clicks_issue else "pdf"
+            you = f"<script>setTimeout(() => document.getElementById('{link}').click(), 300)</script>"
+            clicks = by_hand and (self.clicks_pdf or self.clicks_issue)
             return _html(route, ARTICLE.format(meta=meta, pdf=self.article_pdf) + (you if clicks else ""))
         if path == self.article_pdf or path.startswith("/content/pdf/"):  # SpringerLink's PDFs
             return route.fulfill(status=200, body=ARTICLE_PDF,
                                  headers={"Content-Type": "application/pdf"})
+        if path == "/issue/download":
+            return route.fulfill(status=200, body=ISSUE_ZIP, headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": 'attachment; filename="issue 12.zip"',
+            })
         route.fulfill(status=404, body="not found")
 
     # ── GitLab (git.science.uu.nl) ────────────────────────────────────────────

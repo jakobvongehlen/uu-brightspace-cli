@@ -64,8 +64,8 @@ def _one_article(args, fetch: bool) -> int:
     then = "the PDF opens by itself" if fetch else "open or download the PDF"
     print(f"[LIBRARY] Opening the article through UU's library. Log in there if UU asks, then "
           f"{then}; it's saved to {out}/.", file=sys.stderr)
-    saved = _in_window(url, articles.doi_of(args.article), out, args.session_dir, fetch,
-                       keep_open=getattr(args, "keep_open", False))
+    saved, _ = _in_window(url, articles.doi_of(args.article), out, args.session_dir, fetch,
+                          keep_open=getattr(args, "keep_open", False))
     if not saved:
         print("No PDF saved.", file=sys.stderr)
         return 1
@@ -75,11 +75,15 @@ def _one_article(args, fetch: bool) -> int:
 def cmd_watch(args) -> int:
     """Fetch, as `get` does, each DOI added to wanted.txt in the output folder, until stopped.
 
-    For an AI agent whose sandbox can't open a window: you start this in your own terminal,
-    the agent adds DOIs to the list and reads the result from watch.log, one line per entry:
-    "<doi><TAB><saved file>", or "no PDF" / "not a DOI" in place of the file. Only DOIs are
+    A reading list: you leave this running in a terminal, add DOIs to the list whenever you
+    come across one, and find the result in watch.log, one line per entry:
+    "<doi><TAB><saved file>", or "no PDF" / "not a DOI" in place of the file; "no PDF; kept
+    <files>" names what was downloaded in the window that isn't a PDF. Only DOIs are
     taken from the list, and only their doi.org links are opened, so nothing written there
     can run or open another site.
+
+    Each entry it takes says how far along the list it is ("2/5"), and once the list is
+    through it says "Done", with how many came with a PDF, and keeps waiting for more.
     """
     if not _has_screen(args.cmd):
         return 1
@@ -90,31 +94,54 @@ def cmd_watch(args) -> int:
     print(f"[WATCH] Waiting for DOIs in {wanted}, one per line; results go to {log}. "
           "Ctrl+C stops.", file=sys.stderr)
     fetched, last = 0, 0.0
+    taken, with_pdf, reported = 0, 0, 0  # this run: entries taken, how many got a PDF, said Done at
     try:
-        while fetched < args.max:
-            todo = [ref for ref in _lines(wanted) if _key(ref) not in done] if _settled(wanted) else []
+        while True:
+            settled = _settled(wanted)
+            todo = [ref for ref in _lines(wanted) if _key(ref) not in done] if settled else []
+            if settled and not todo and taken > reported:
+                more = "" if fetched >= args.max else " Waiting for more DOIs; Ctrl+C stops."
+                print(f"[WATCH] Done: {with_pdf} of {taken} with a PDF; {log} has each result.{more}",
+                      file=sys.stderr)
+                reported = taken
+            if fetched >= args.max:
+                break
             if not todo:
                 time.sleep(WATCH_POLL_S)
                 continue
             ref = todo[0]
             done.add(_key(ref))
+            step = f"{taken + 1}/{taken + len(todo)}"
+            taken += 1
             doi = articles.doi_of(ref)
             if not doi:
+                print(f"[WATCH] {step} {_shown(ref)}: not a DOI", file=sys.stderr)
                 result = "not a DOI"
             else:
                 time.sleep(max(0.0, last + WATCH_PAUSE_S - time.monotonic()))
-                print(f"[WATCH] {doi}", file=sys.stderr)
-                saved = _in_window(articles.article_url(doi), doi, out, args.session_dir, fetch=True)
+                print(f"[WATCH] {step} {doi}", file=sys.stderr)
+                saved, others = _in_window(articles.article_url(doi), doi, out, args.session_dir,
+                                           fetch=True)
                 fetched, last = fetched + 1, time.monotonic()
+                with_pdf += bool(saved)
                 result = str(saved[0].resolve()) if saved else "no PDF"
+                if others and not saved:
+                    result += "; kept " + ", ".join(str(p.resolve()) for p in others)
             with log.open("a", encoding="utf-8") as f:
                 f.write(f"{doi or ref}\t{result}\n")
     except KeyboardInterrupt:
         print("[WATCH] Stopped.", file=sys.stderr)
         return 0
-    print(f"[WATCH] Fetched {fetched} articles, the most for one run (--max): "
-          "start it again for more.", file=sys.stderr)
+    if any(_key(ref) not in done for ref in _lines(wanted)):
+        print(f"[WATCH] Fetched {fetched} articles, the most for one run (--max): "
+              "start it again for more.", file=sys.stderr)
     return 0
+
+
+def _shown(ref: str) -> str:
+    """A list entry as the terminal may show it: printable characters only, so a line in the
+    list can't send the terminal escape codes."""
+    return "".join(c if c.isprintable() else "?" for c in ref)[:100]
 
 
 def _key(ref: str) -> str:
@@ -147,7 +174,7 @@ def _has_screen(cmd: str) -> bool:
 
 
 def _in_window(url: str, doi: str | None, out: Path, session_dir: str, fetch: bool,
-               keep_open: bool = False) -> list[Path]:
+               keep_open: bool = False) -> tuple[list[Path], list[Path]]:
     with sync_playwright() as pw:
         ctx = browser.launch(pw, session_dir)
         try:
@@ -222,8 +249,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     li.add_argument("articles", nargs="+", help="DOIs (10.1016/…) or the articles' web addresses")
 
     wa = sub.add_parser("watch", help=f"Fetch, as get does, every DOI added to {WANTED} in the "
-                                      "output folder, for an AI agent that can't open a window "
-                                      "itself; Ctrl+C stops")
+                                      "output folder, a reading list; Ctrl+C stops")
     wa.add_argument("-o", "--output", default=".",
                     help=f"Folder for the PDFs, {WANTED} and {WATCH_LOG} (default: here)")
     wa.add_argument("--max", type=int, default=WATCH_MAX,

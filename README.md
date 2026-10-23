@@ -194,7 +194,7 @@ uu library open 10.1016/j.knosys.2025.113564         # Through UU's library; the
 uu library open https://link.springer.com/article/… -o papers/
 uu library get 10.1016/j.knosys.2025.113564          # The same window, which opens the PDF itself
 uu library link 10.1016/j.knosys.2025.113564         # Only the link through UU's library, for your own browser
-uu library watch -o papers/                          # get, for each DOI an AI agent adds to papers/wanted.txt
+uu library watch -o papers/                          # get, for each DOI you add to papers/wanted.txt
 uu library elsevier 10.1016/j.knosys.2025.113564     # Elsevier's API (needs ELSEVIER_API_KEY)
 ```
 
@@ -210,6 +210,11 @@ also offer the whole book. `--keep-open` keeps it
 open for more (supplementary material) until you close it. It works for every publisher
 UU subscribes to, and like `--auth browser` it needs a screen.
 
+A download that isn't a PDF, such as a whole issue as a ZIP, is saved under its own name,
+but it isn't the article, so the window stays open for the article's own PDF. The window
+says on stderr which pages it opens and what it downloads, without their query strings
+(those can hold a login ticket), so you can see where it got stuck.
+
 `get` opens the same window, so you still see it and log in when UU asks, but then opens
 the PDF itself: the one the article page names in its `citation_pdf_url` tag, the tag
 Google Scholar reads, which most publishers set. It opens that in a tab of the same
@@ -222,40 +227,29 @@ article per run, always in a window on your screen: never a download in the back
 Open it in the browser you already use: it logs in when UU asks, the way the library's own
 links do. It needs no screen and no session of its own, so it also works over SSH.
 
-#### With an AI coding agent
+#### A reading list: `watch`
 
-An agent such as Claude Code can't fetch an article through the library for you on its
-own. Three things are in the way:
-
-- **Your login.** It doesn't need your session cookie: `uu` uses its own saved session,
-  the way `gh` uses its login. But that session is as good as your password for the
-  library until it expires, so an agent should never read it.
-- **The window.** `open` and `get` need a window on your screen. In Claude Code's sandbox
-  on Linux, Chromium can't open one: the sandbox blocks the Unix sockets Chromium needs
-  for its single-instance lock and the display, and it stops at `socket() failed:
-  Operation not permitted`. Headless Chromium, which the other commands use, does run.
-- **The network.** A sandbox lets through only the hosts on its list, and the library
-  proxy is usually not on it. Publishers also refuse an agent's own web fetches (403),
-  since those don't come from UU's network.
-
-The way around all three is `watch`, which you start in your own terminal, outside the
-agent's sandbox, and leave running:
+`watch` works through a list of articles for you. Start it in a terminal and leave it
+running:
 
 ```sh
 uu library watch -o ~/thesis/literature/papers
 ```
 
-The agent adds DOIs to `wanted.txt` in that folder, one per line (`#` starts a comment),
-and waits for their line in `watch.log`: the DOI, a tab, then the saved file, or `no PDF`
-when the window closed without one. For each new DOI, `watch` does what `get` does: a
-window on your screen, where you log in if UU asks. It takes only DOIs from the list and
-opens only their doi.org links, so nothing an agent writes there can run or open another
-site. It fetches one article at a time, ten seconds apart, and stops after 25 (`--max`),
-so a list that keeps growing can't turn into systematic downloading. A DOI already in
-`watch.log` is skipped, also after a restart; to try one again, use `uu library get`.
+Add DOIs to `wanted.txt` in that folder whenever you come across one, one per line (`#`
+starts a comment): by hand, from a script, or pasted from a reference list. For each new
+DOI, `watch` does what `get` does: a window on your screen, where you log in if UU asks,
+and the PDF saved in the folder. `watch.log` gets a line per DOI: the DOI, a tab, then the
+saved file, or `no PDF` when the window closed without one (`no PDF; kept <file>` when
+what you downloaded there wasn't a PDF). In the terminal, each DOI shows how far along the
+list it is (`[WATCH] 2/5 10.1016/…`), and once the list is through, `[WATCH] Done` says how
+many came with a PDF; then it waits for more.
 
-Without `watch`, the agent gives you the command and the folder to save to, and reads
-the PDF from that folder once you've run it.
+It takes only DOIs from the list and opens only their doi.org links, so nothing written
+there can run or open another site. It fetches one article at a time, ten seconds apart,
+and stops after 25 (`--max`), so a list that keeps growing can't turn into systematic
+downloading. A DOI already in `watch.log` is skipped, also after a restart; to try one
+again, use `uu library get`. Ctrl+C stops it.
 
 `elsevier` uses Elsevier's Article Retrieval API, the route Elsevier allows for automated
 access; its website terms forbid scripts that download from ScienceDirect. Get a personal
