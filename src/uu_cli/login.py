@@ -68,29 +68,13 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
     page.click("#loginButton2")
 
     print("[AUTH] Waiting for OTP form...", file=sys.stderr)
-    page.wait_for_timeout(3000)
+    target = urlparse(start_url).hostname
+    otp_sel = _after_password(page, target)
     print(f"[AUTH] URL: {page.url}", file=sys.stderr)
-
-    otp_sel = page.evaluate(
-        "() => {"
-        "  const el = document.querySelector("
-        "    'input[autocomplete=\"one-time-code\"],"
-        "    input[autocomplete=\"one-time-password\"],"
-        "    input[autocomplete=\"otp\"],"
-        "    input[maxlength=\"6\"],"
-        "    input[type=\"text\"]'"
-        "  );"
-        "  if (el && el.id) return '#' + el.id;"
-        "  if (el && el.name) return 'input[name=\"' + el.name + '\"]';"
-        "  return null;"
-        "}"
-    )
-
-    if not otp_sel:
-        _dump(page, "debug_otp_missing")
-        body_text = page.inner_text("body")[:300]
-        print(f"[AUTH] OTP not found. Body: {body_text}", file=sys.stderr)
-        raise RuntimeError(f"OTP field not found. URL={page.url}")
+    if otp_sel is None:  # UU asks no code for some services
+        print(f"[AUTH] ✓ Logged in without a code: {page.url}", file=sys.stderr)
+        page.wait_for_timeout(2000)
+        return
 
     print(f"[AUTH] OTP field found: {otp_sel}", file=sys.stderr)
 
@@ -111,20 +95,109 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
         page.keyboard.press("Enter")
 
     print(f"[AUTH] Waiting for {name}...", file=sys.stderr)
-    page.wait_for_timeout(5000)
-    print(f"[AUTH] URL: {page.url}", file=sys.stderr)
-
-    host = urlparse(page.url).hostname or ""
-    if host != urlparse(start_url).hostname:
+    if not _wait_for_service(page, target):
         _dump(page, f"debug_not_{name.lower()}")
         body_text = page.inner_text("body")[:300]
-        hint = ("\nSURFconext may be asking for your consent to share your details with "
-                f"{name}; log in once in a normal browser to give it."
-                if host.endswith("surfconext.nl") else "")
-        raise RuntimeError(f"Post-OTP URL is not {name}: {page.url}\nBody: {body_text}{hint}")
+        raise RuntimeError(f"Post-OTP URL is not {name}: {page.url}\nBody: {body_text}")
 
     print(f"[AUTH] ✓ Logged in: {page.url}", file=sys.stderr)
     page.wait_for_timeout(2000)
+
+
+# The OTP field on UU's code page.
+_OTP_FIELD_JS = (
+    "() => {"
+    "  const el = document.querySelector("
+    "    'input[autocomplete=\"one-time-code\"],"
+    "    input[autocomplete=\"one-time-password\"],"
+    "    input[autocomplete=\"otp\"],"
+    "    input[maxlength=\"6\"],"
+    "    input[type=\"text\"]'"
+    "  );"
+    "  if (el && el.id) return '#' + el.id;"
+    "  if (el && el.name) return 'input[name=\"' + el.name + '\"]';"
+    "  return null;"
+    "}"
+)
+
+
+def _after_password(page: Page, target_host: str | None, timeout_s: float = 20) -> str | None:
+    """After the password: the OTP field's selector, or None when it went on to target_host without one.
+
+    UU asks no code for some services (edu.nl): then SURFconext's consent page, if any, and
+    the service follow straight away.
+    """
+    start = time.monotonic()
+    deadline = start + timeout_s
+    on_target_since = None
+    while time.monotonic() < deadline:
+        try:
+            host = urlparse(page.url).hostname or ""
+            if host == "login.uu.nl":
+                if page.locator("#Ecom_Password").count():
+                    if time.monotonic() - start > 5:  # the form came back
+                        raise RuntimeError("UU didn't accept the Solis-id or password.")
+                else:
+                    otp_sel = page.evaluate(_OTP_FIELD_JS)
+                    if otp_sel:
+                        return otp_sel
+            elif host.endswith("surfconext.nl"):
+                _give_consent(page)
+            if host == target_host:
+                on_target_since = on_target_since or time.monotonic()
+                if time.monotonic() - on_target_since > 2:
+                    return None
+            else:
+                on_target_since = None
+        except PlaywrightError:
+            pass  # the page navigated mid-check; look again
+        page.wait_for_timeout(250)
+    _dump(page, "debug_otp_missing")
+    body_text = page.inner_text("body")[:300]
+    print(f"[AUTH] OTP not found. Body: {body_text}", file=sys.stderr)
+    raise RuntimeError(f"OTP field not found. URL={page.url}")
+
+
+def _wait_for_service(page: Page, target_host: str | None, timeout_s: float = 20) -> bool:
+    """After the code: wait until back on target_host (for 2 s), past SURFconext's consent page."""
+    deadline = time.monotonic() + timeout_s
+    on_target_since = None
+    while time.monotonic() < deadline:
+        try:
+            host = urlparse(page.url).hostname or ""
+            if host.endswith("surfconext.nl"):
+                _give_consent(page)
+            if host == target_host:
+                on_target_since = on_target_since or time.monotonic()
+                if time.monotonic() - on_target_since > 2:
+                    return True
+            else:
+                on_target_since = None
+        except PlaywrightError:
+            pass  # the page navigated mid-check; look again
+        page.wait_for_timeout(250)
+    return False
+
+
+def _give_consent(page: Page) -> None:
+    """Answer SURFconext's one-time "Review your information that will be shared" page.
+
+    It comes the first time you log in to a service through SURFconext. Logging in to that
+    service is what you asked for, so the CLI says what the service gets and proceeds.
+    """
+    accept = page.locator("form#accept button[type=submit]")
+    if not accept.count():
+        return
+    shared = page.locator("form#accept").evaluate(
+        "f => (f.closest('main') || document.body).innerText")
+    lines = [ln.strip() for ln in shared.splitlines() if ln.strip()]
+    print("[AUTH] SURFconext asks once for your consent to share this with the service:",
+          file=sys.stderr)
+    for ln in lines[:12]:
+        print(f"[AUTH]   {ln}", file=sys.stderr)
+    print("[AUTH] SURFconext: giving consent", file=sys.stderr)
+    accept.first.click()
+    page.wait_for_load_state("load")
 
 
 def browser_login(ctx: BrowserContext, start_url: str, name: str = "Brightspace") -> None:

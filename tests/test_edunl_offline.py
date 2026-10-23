@@ -145,3 +145,36 @@ def test_without_a_way_to_log_in_says_why(fake_uu, capsys):
     assert code == 1 and out == ""
     assert "a terminal to type the code" in err
     assert fake_uu.edunl_links == []
+
+
+@pytest.mark.browser
+def test_no_code_and_surfconexts_consent_page(fake_uu, at_terminal, capsys):
+    """As on edu.nl: UU asks no code, and SURFconext asks once for your consent."""
+    fake_uu.asks_code = False
+    fake_uu.consent_needed = {"edunl"}
+
+    code, out, err = run(edunl, ["shorten", "https://example.org/x"], capsys)
+
+    assert code == 0, err
+    assert out == f"{EDUNL}/c0001\n"
+    assert fake_uu.consents == ["edunl"] and "SURFconext: giving consent" in err
+    assert "Review your information that will be shared." in err  # says what it agreed to
+    assert fake_uu.codes == [] and not any(p.startswith("Code") for p in at_terminal)
+
+
+@pytest.mark.browser
+def test_consent_page_after_the_code(fake_uu, at_terminal, capsys):
+    fake_uu.consent_needed = {"edunl"}
+
+    code, out, err = run(edunl, ["shorten", "https://example.org/x"], capsys)
+
+    assert code == 0, err
+    assert fake_uu.consents == ["edunl"] and len(fake_uu.codes) == 1
+
+
+@pytest.mark.browser
+def test_a_wrong_password_says_so(fake_uu, at_terminal, monkeypatch, capsys):
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "wrong")
+
+    with pytest.raises(RuntimeError, match="didn't accept the Solis-id or password"):
+        edunl(["login"])

@@ -74,6 +74,14 @@ WAYF = f"""<h1>Select an institution to log in</h1>
   <li><a href="{IDP}/nidp/app/login?sp={{sp}}">Utrecht University</a></li>
 </ul>"""
 
+# SURFconext's one-time page before it lets a service know who you are, as the real one is laid out.
+CONSENT = f"""<main><h1>Review your information that will be shared.</h1>
+<p>{{sp}} will receive</p><p>Identifier</p>
+<form id="accept" method="post" action="{SURFCONEXT}/authentication/idp/process-consent?sp={{sp}}">
+  <input type="hidden" name="consent" value="yes">
+  <button type="submit" class="cta_consent_ok" name="accept_terms_button">Proceed to {{sp}}</button>
+</form></main>"""
+
 HOME = """<h1>My Home</h1>
 <script>localStorage.setItem('D2L.Fetch.Tokens',
   JSON.stringify({"*:*:*": {"access_token": "TOKEN", "expires_at": 0}}));</script>"""
@@ -258,6 +266,9 @@ class FakeUU:
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
         self.filesender_secret = FILESENDER_SECRET  # "" when your profile has none
+        self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
+        self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
+        self.consents: list[str] = []  # services you gave consent for
 
     def install(self, ctx, by_hand: bool = False) -> None:
         """Serve the fake to ctx. by_hand: someone at this browser fills in UU's forms (--auth browser)."""
@@ -300,17 +311,33 @@ class FakeUU:
         form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
         if query.get("sid") == ["0"]:
             if form.get("Ecom_User_ID") == SOLISID and form.get("Ecom_Password") == PASSWORD:
+                if not self.asks_code:
+                    return self._back_to(route, sp)
                 you = _by_hand({"nffc": pyotp.TOTP(TOTP_SECRET).now()}) if by_hand else ""
                 return _html(route, OTP_FORM.format(sp=sp) + you)
             return _html(route, "<p>Wrong Solis-id or password.</p>" + LOGIN_FORM.format(sp=sp))
         code = form.get("nffc", "")
         self.codes.append(code)
         if pyotp.TOTP(TOTP_SECRET).verify(code, valid_window=1):
-            return _redirect(route, ACS[sp], cookie="IDP_SESSION=1; Path=/")
+            return self._back_to(route, sp)
         return _html(route, "<p>Wrong code.</p>" + OTP_FORM.format(sp=sp))
+
+    def _back_to(self, route, sp: str) -> None:
+        """Logged in at UU: back to the service, past SURFconext's consent page when it asks."""
+        if sp in self.consent_needed:
+            return _redirect(route, f"{SURFCONEXT}/authentication/sp/consume-assertion?sp={sp}",
+                             cookie="IDP_SESSION=1; Path=/")
+        return _redirect(route, ACS[sp], cookie="IDP_SESSION=1; Path=/")
 
     # ── SURFconext, in front of Konjoin and edu.nl ────────────────────────────
     def _surfconext(self, route, req, url) -> None:
+        sp = parse_qs(url.query).get("sp", ["konjoin"])[0]
+        if url.path == "/authentication/sp/consume-assertion":
+            return _html(route, CONSENT.format(sp=sp))
+        if url.path == "/authentication/idp/process-consent" and req.method == "POST":
+            self.consents.append(sp)
+            self.consent_needed.discard(sp)
+            return _redirect(route, ACS[sp])
         if url.path.startswith("/authentication/idp/single-sign-on"):
             sp = parse_qs(url.query).get("sp", ["konjoin"])[0]  # who asked, as the real request says
             return _html(route, WAYF.format(sp=sp))
