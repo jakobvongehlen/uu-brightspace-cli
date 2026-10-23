@@ -178,3 +178,16 @@ def test_a_wrong_password_says_so(fake_uu, at_terminal, monkeypatch, capsys):
 
     with pytest.raises(RuntimeError, match="didn't accept the Solis-id or password"):
         edunl(["login"])
+
+
+@pytest.mark.browser
+def test_consent_page_with_an_existing_uu_session(fake_uu, at_terminal, monkeypatch, capsys):
+    run(brightspace, ["login"], capsys)
+    monkeypatch.setattr(auth, "interactive", lambda: False)
+    fake_uu.consent_needed = {"edunl"}
+
+    code, out, err = run(edunl, ["shorten", "https://example.org/a"], capsys)
+
+    assert code == 0, err
+    assert "Logged in with your existing UU session." in err
+    assert fake_uu.consents == ["edunl"] and len(fake_uu.codes) == 1

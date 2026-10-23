@@ -270,6 +270,8 @@ def _reach_login_form(page: Page, target_host: str | None, timeout_s: float = 30
             if page.locator("#Ecom_User_ID").count():
                 return True
             host = urlparse(page.url).hostname or ""
+            if host.endswith("surfconext.nl"):
+                _give_consent(page)  # still logged in at UU, but new to this service
             if host.endswith("surfconext.nl") and page.url != picked_on:
                 uu = page.get_by_text(UU_IN_SURFCONEXT).first
                 if uu.count():

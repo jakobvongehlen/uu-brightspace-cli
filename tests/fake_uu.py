@@ -305,7 +305,7 @@ class FakeUU:
             if sp in VIA_SURFCONEXT:  # only SURFconext's picker links here
                 self.wayf_choices += 1
             if "IDP_SESSION=" in _cookies(req):  # single sign-on: still logged in at UU
-                return _redirect(route, ACS[sp])
+                return self._back_to(route, sp)
             you = _by_hand({"Ecom_User_ID": SOLISID, "Ecom_Password": PASSWORD}) if by_hand else ""
             return _html(route, LOGIN_FORM.format(sp=sp) + you)
         form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
