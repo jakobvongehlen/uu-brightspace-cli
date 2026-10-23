@@ -313,21 +313,18 @@ site; questions go to kort@surf.nl. edu.nl publishes no terms of use beyond thos
 ### SURFfilesender
 
 ```sh
-uu filesender login                                         # Once: keeps your API details
+uu filesender login                                         # Log in ahead of time
 uu filesender send notes.zip --to name@uu.nl --accept-terms
 uu filesender send a.pdf b.pdf --to x@uu.nl,y@uu.nl --days 7 --encrypt --accept-terms
 uu filesender transfers                                     # Yours that haven't expired
 ```
 
 [SURFfilesender](https://filesender.surf.nl) sends large files to people you name by email;
-they get a download link. `login` goes through SURFconext and UU's Solis-id page like the
-other services, opens your profile page (which makes an API secret when you have none) and
-keeps your username and secret in `filesender.json` next to the token, owner-only. You never
-copy the secret yourself; made a new one on the site? Run `login` again. Or set
-`UU_FILESENDER_USER` and `UU_FILESENDER_API_SECRET`. From then on `send` and `transfers` use
-FileSender's REST API, signed with that secret as SURF's own
-[Python client](https://github.com/filesender/filesender/blob/master/scripts/client/filesender.py)
-signs it, without a browser.
+they get a download link. The login goes through SURFconext and UU's Solis-id page like the
+other services, so a UU session carries over, and the first time it accepts SURFfilesender's
+one-time terms page for you, saying so. `send` and `transfers` then call FileSender's REST API
+with that login session, as SURF's own upload page does: SURF hands out no API secrets for
+FileSender's own [Python client](https://github.com/filesender/filesender/blob/master/scripts/client/filesender.py).
 
 What SURF's [code of conduct](https://servicedesk.surf.nl/wiki/spaces/WIKI/pages/198967771/Huisregels+Code+of+Conduct)
 (version 3, 30-03-2026) means here:
@@ -377,8 +374,8 @@ src/uu_cli/
   services/
     brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
-    filesender/        api.py (the signed REST API, encryption), commands.py (login through
-                       the profile page), cli.py
+    filesender/        api.py (the REST API with the login session, encryption),
+                       commands.py (the upload page's session tokens), cli.py
     gitlab/            api.py (/api/v4 from a GitLab page, with its CSRF token),
                        commands.py (its own Solis-ID sign-in), cli.py
     konjoin/           api.py (/api/project), commands.py, cli.py

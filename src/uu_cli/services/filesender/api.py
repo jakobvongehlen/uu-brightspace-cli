@@ -1,10 +1,11 @@
-"""SURFfilesender's REST API, used the way SURF's own Python client (filesender.py) uses it.
+"""SURFfilesender's REST API, called with your login session, as its own upload page does.
 
-Every request is signed: an HMAC-SHA1, keyed with your API secret, over the method, the
-address without its scheme, the query (remote_user, timestamp and the rest, sorted) and the
-body. The secret itself never travels, and the server refuses a timestamp more than 15 seconds
-old. A transfer is a POST /transfer with the files' names and sizes, the file chunks as PUTs,
-then a PUT that completes each file and one that completes the transfer.
+SURF doesn't hand out API secrets (its server has FileSender's "remote authentication" off),
+so the CLI calls the REST API from the logged-in browser profile: the session cookie goes
+along, with the page's security token, and the CSRF token on all but a GET, as the
+website's own client.js sends them. A transfer is a POST /transfer with the files' names and
+sizes, the file chunks as PUTs, then a PUT that completes each file and one that completes
+the transfer.
 
 With a password, chunks are encrypted as the website does it: AES-GCM with a key derived
 (PBKDF2-SHA256) from the password and the transfer's salt, and a nonce of the file's IV plus the
@@ -15,7 +16,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -23,21 +23,18 @@ import time
 from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
+from typing import Callable
+from urllib.parse import urlencode
 
-import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-from uu_cli import paths
 
 BASE_URL = os.environ.get("UU_FILESENDER_URL", "https://filesender.surf.nl").rstrip("/")
 REST = f"{BASE_URL}/rest.php"
 # The client settings the website's own pages read (chunk size, encryption, limits).
 CLIENT_CONFIG = f"{BASE_URL}/filesender-config.js.php"
-# What "Download Python CLI Client configuration" on your profile page downloads.
-ACCOUNT_CONFIG = f"{BASE_URL}/clidownload.php?config=1"
-# The profile page: opening it makes the API secret, when you have none yet.
-PROFILE = f"{BASE_URL}/?s=user"
-LOGIN = f"{BASE_URL}/simplesaml/module.php/saml/sp/login/default-sp?ReturnTo={PROFILE}"
+# The upload page: it carries the session's security token.
+UPLOAD = f"{BASE_URL}/?s=upload"
+LOGIN = f"{BASE_URL}/simplesaml/module.php/saml/sp/login/default-sp?ReturnTo={UPLOAD}"
 
 TIMEOUT_S = 120
 
@@ -46,100 +43,65 @@ class FilesenderError(Exception):
     """SURFfilesender refused, with its own message where it gave one."""
 
 
+class NotLoggedIn(FilesenderError):
+    """The session has expired, or there was none."""
+
+
+# One HTTP request: (method, url, headers, body) -> (status, response headers, body).
+Transport = Callable[[str, str, dict, "bytes | None"], "tuple[int, dict, bytes]"]
+
+
 @dataclass
-class Account:
-    username: str  # FileSender's id for you (from SURFconext), not your email address
-    secret: str
+class Session:
+    send: Transport  # through the logged-in browser profile (commands.connected), or a fake
+    token: str = ""  # the page's data-security-token, which the server may renew
+    csrf: str = ""   # the csrfptoken cookie, which every request but a GET repeats as a header
 
 
-def account_file() -> Path:
-    return paths.TOKEN_FILE.parent / "filesender.json"
-
-
-def load_account() -> Account | None:
-    """Your API details: UU_FILESENDER_USER and UU_FILESENDER_API_SECRET, or what `login` saved."""
-    user, secret = os.environ.get("UU_FILESENDER_USER"), os.environ.get("UU_FILESENDER_API_SECRET")
-    if user and secret:
-        return Account(user, secret)
-    try:
-        data = json.loads(account_file().read_text())
-        return Account(data["username"], data["secret"])
-    except (OSError, ValueError, KeyError):
-        return None
-
-
-def save_account(account: Account) -> Path:
-    path = account_file()
-    paths.write_private(path, json.dumps({"username": account.username, "secret": account.secret}))
-    return path
-
-
-def parse_account_config(text: str) -> Account | None:
-    """The username and API secret in filesender.py.ini; None when it has no secret."""
-    values = dict(re.findall(r"(?m)^\s*(username|apikey)\s*=\s*(\S*)\s*$", text))
-    if values.get("username") and values.get("apikey"):
-        return Account(values["username"], values["apikey"])
-    return None
-
-
-# ── signed requests ───────────────────────────────────────────────────────────
-
-def _query(params: dict) -> str:
-    # As filesender.py does it: sorted, and not URL-encoded (every value is a token or a number).
-    return "&".join(sorted(f"{k}={v}" for k, v in params.items()))
-
-
-def signature(secret: str, method: str, path: str, params: dict, body: bytes | None) -> str:
-    """The HMAC the server recomputes: method&host/rest.php/path?query[&body]."""
-    signed = f"{method.lower()}&{REST.split('://', 1)[1]}{path}?{_query(params)}".encode()
-    if body:
-        signed += b"&" + body
-    return hmac.new(secret.encode(), signed, hashlib.sha1).hexdigest()
-
-
-def _send(method: str, url: str, headers: dict, body: bytes | None) -> tuple[int, bytes]:
-    """One HTTP request; the tests replace this."""
-    resp = requests.request(method, url, headers=headers, data=body, timeout=TIMEOUT_S)
-    return resp.status_code, resp.content
-
-
-def call(account: Account, method: str, path: str, params: dict | None = None,
+def call(session: Session, method: str, path: str, params: dict | None = None,
          content=None, raw: bytes | None = None):
-    """A signed request to the REST API; returns its JSON, or raises FilesenderError."""
-    params = {**(params or {}), "remote_user": account.username, "timestamp": str(round(time.time()))}
+    """A request to the REST API with the session; returns its JSON, or raises FilesenderError."""
     body = json.dumps(content, separators=(",", ":")).encode() if content is not None else raw
-    params["signature"] = signature(account.secret, method, path, params, body)
     headers = {"Accept": "application/json",
                "Content-Type": "application/octet-stream" if raw is not None else "application/json"}
-    status, data = _send(method.upper(), f"{REST}{path}?{_query(params)}", headers, body)
+    if session.token:
+        headers["X-Filesender-Security-Token"] = session.token
+    if method.lower() != "get" and session.csrf:  # client.js and csrfprotector.js add it
+        headers["csrfptoken"] = session.csrf
+    url = f"{REST}{path}" + (f"?{urlencode(params)}" if params else "")
+    status, got, data = session.send(method.upper(), url, headers, body)
+    session.token = {k.lower(): v for k, v in got.items()}.get(
+        "x-filesender-security-token") or session.token
     if status not in (200, 201):
-        raise FilesenderError(_message(status, data))
-    return json.loads(data) if data else None
+        raise _error(status, data)
+    try:
+        return json.loads(data) if data else None
+    except ValueError:
+        raise FilesenderError(f"HTTP {status}, but not the JSON the API answers with") from None
 
 
-def _message(status: int, data: bytes) -> str:
+def _error(status: int, data: bytes) -> FilesenderError:
     try:
         error = json.loads(data)
         text = error.get("message", "") if isinstance(error, dict) else ""
     except ValueError:
         text = ""
-    if text == "auth_remote_signature_check_failed":
-        return ("the API secret doesn't match (made a new one on your profile page? "
-                "then run `uu filesender login` again)")
-    if text == "auth_remote_too_late":
-        return "the server says the request is too old: is this computer's clock right?"
-    return f"HTTP {status}" + (f": {text}" if text else "")
+    if text in ("rest_authentication_required", "auth_user_not_allowed"):
+        return NotLoggedIn("not logged in (any more); run `uu filesender login`")
+    if text == "rest_xsrf_token_did_not_match":
+        return FilesenderError("the session's security token didn't match; try again")
+    return FilesenderError(f"HTTP {status}" + (f": {text}" if text else ""))
 
 
-def _get_public(url: str) -> bytes:
-    status, data = _send("GET", url, {"Accept": "*/*"}, None)
+def _get_public(session: Session, url: str) -> bytes:
+    status, _, data = session.send("GET", url, {"Accept": "*/*"}, None)
     if status != 200:
         raise FilesenderError(f"{url}: HTTP {status}")
     return data
 
 
-def chunk_size() -> int:
-    return int(json.loads(_get_public(f"{REST}/info"))["upload_chunk_size"])
+def chunk_size(session: Session) -> int:
+    return int(json.loads(_get_public(session, f"{REST}/info"))["upload_chunk_size"])
 
 
 # ── encryption, as the website and filesender.py do it ───────────────────────
@@ -151,9 +113,9 @@ class Crypto:
     key_version: str = "3"  # AES-GCM
 
 
-def crypto_settings(password: str) -> Crypto:
+def crypto_settings(session: Session, password: str) -> Crypto:
     """The server's encryption settings, after checking password against its rules."""
-    text = _get_public(CLIENT_CONFIG).decode("utf-8", "replace")
+    text = _get_public(session, CLIENT_CONFIG).decode("utf-8", "replace")
 
     def setting(name: str, pattern: str = r"\W*(\w+)") -> str:
         found = re.search(name + pattern, text)
@@ -199,7 +161,7 @@ def encrypt_chunk(key: bytes, iv: bytes, aead: str, index: int, data: bytes) -> 
 
 # ── a transfer ─────────────────────────────────────────────────────────────────
 
-def send(account: Account, files: list[Path], recipients: list[str], subject: str | None = None,
+def send(session: Session, files: list[Path], recipients: list[str], subject: str | None = None,
          message: str | None = None, days: int | None = None, password: str | None = None,
          progress=lambda text: None) -> dict:
     """Upload files to recipients; returns the transfer as the server describes it.
@@ -207,8 +169,8 @@ def send(account: Account, files: list[Path], recipients: list[str], subject: st
     Without days the server's default applies (14 days at SURF, at most 21). A transfer that
     fails halfway is deleted again, so no recipient gets half of it.
     """
-    chunk = chunk_size()
-    crypto = crypto_settings(password) if password else None
+    chunk = chunk_size(session)
+    crypto = crypto_settings(session, password) if password else None
     local, described = {}, []
     for path in files:
         size = path.stat().st_size
@@ -241,7 +203,7 @@ def send(account: Account, files: list[Path], recipients: list[str], subject: st
                        encryption_password_encoding="none", encryption_password_version="1",
                        encryption_password_hash_iterations=crypto.iterations)
 
-    transfer = call(account, "post", "/transfer", content=content)
+    transfer = call(session, "post", "/transfer", content=content)
     token = transfer.get("roundtriptoken", "")
     first = transfer["files"][0]["puid"]
     try:
@@ -256,19 +218,19 @@ def send(account: Account, files: list[Path], recipients: list[str], subject: st
                     data = fh.read(chunk)
                     if key:
                         data = encrypt_chunk(key, mine["iv"], mine["aead"], index, data)
-                    call(account, "put", f"/file/{f['id']}/chunk/{offset}", ticket, raw=data)
+                    call(session, "put", f"/file/{f['id']}/chunk/{offset}", ticket, raw=data)
                     progress(f"{f['name']}: {min(offset + chunk, int(f['size']))} of {f['size']} bytes")
-            call(account, "put", f"/file/{f['id']}", ticket, content={"complete": True})
-        call(account, "put", f"/transfer/{transfer['id']}", {"key": first}, content={"complete": True})
+            call(session, "put", f"/file/{f['id']}", ticket, content={"complete": True})
+        call(session, "put", f"/transfer/{transfer['id']}", {"key": first}, content={"complete": True})
     except BaseException:
         try:
-            call(account, "delete", f"/transfer/{transfer['id']}", {"key": first})
+            call(session, "delete", f"/transfer/{transfer['id']}", {"key": first})
         except Exception:
             pass  # the transfer was already broken; the server expires it
         raise
     return transfer
 
 
-def transfers(account: Account) -> list[dict]:
+def transfers(session: Session) -> list[dict]:
     """Your transfers that haven't expired."""
-    return call(account, "get", "/transfer/@me") or []
+    return call(session, "get", "/transfer/@me") or []

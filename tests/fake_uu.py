@@ -228,18 +228,9 @@ EDUNL_ROW = """<tr>
 EDUNL_CSRF = "edunl-csrf"
 EDUNL_PER_PAGE = 2
 
-# SURFfilesender: your id there and the API secret its profile page gives you (made up).
-FILESENDER_USER = "0123456789abcdef0123456789abcdef01234567"
-FILESENDER_SECRET = "fakesecret0fakesecret0fakesecret0fakesecret0fakesecret0fake0000"
-# What "Download Python CLI Client configuration" serves (clidownload.php?config=1).
-FILESENDER_INI = """[system]
-base_url = https://filesender.surf.nl/rest.php
-default_transfer_days_valid = 14
-
-[user]
-username = {user}
-apikey = {secret}
-"""
+# SURFfilesender: what its upload page gives a logged-in session (made up).
+FILESENDER_TOKEN = "sec-token-1"   # <body data-security-token>
+FILESENDER_CSRF = "csrfp-token-1"  # the csrfptoken cookie
 
 
 def make_jwt(exp: float) -> str:
@@ -273,7 +264,6 @@ class FakeUU:
         self.edunl_links: list[dict] = []  # your links, newest first: code, url, label, clicks, date
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
-        self.filesender_secret = FILESENDER_SECRET  # "" when your profile has none
         self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
         self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
         self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
@@ -571,22 +561,18 @@ class FakeUU:
             return _redirect(route, f"{SURFCONEXT}/authentication/idp/single-sign-on?SAMLRequest=x&sp=filesender")
         if path == urlparse(ACS["filesender"]).path:
             self.filesender_logins += 1
-            return _redirect(route, f"{FILESENDER}/?s=user", cookie="SimpleSAMLAuthToken=t0k; Path=/")
+            return _redirect(route, f"{FILESENDER}/?s=upload", cookie="SimpleSAMLAuthToken=t0k; Path=/")
         if path == "/" and query.get("aup") == ["accept"] and logged_in:
             self.filesender_terms = True
-            return _redirect(route, f"{FILESENDER}/?s=user")
+            return _redirect(route, f"{FILESENDER}/?s=upload")
         if path == "/":
             if logged_in and not self.filesender_terms:  # as SURF's page is laid out
                 return _html(route, FILESENDER_TERMS)
-            if logged_in:
-                return _html(route, "<h1>My profile</h1><h2>Remote authentication</h2>"
-                                    '<a href="clidownload.php?config=1">Download Python CLI Client configuration</a>')
+            if logged_in:  # the upload page, with the session's tokens as SURF's sets them
+                return _html(route, "<h1>Upload</h1><script>"
+                                    f"document.body.dataset.securityToken = '{FILESENDER_TOKEN}';"
+                                    f"document.cookie = 'csrfptoken={FILESENDER_CSRF}; path=/';</script>")
             return _html(route, '<h1>Welkom bij SURFfilesender!</h1><a id="btn_logon" href="#">Aanmelden</a>')
-        if path == "/clidownload.php" and query.get("config") == ["1"]:
-            if not logged_in:
-                return route.fulfill(status=500, body="Authentication required")
-            ini = FILESENDER_INI.format(user=FILESENDER_USER, secret=self.filesender_secret)
-            return route.fulfill(status=200, body=ini, headers={"Content-Type": "text/plain; charset=utf-8"})
         route.fulfill(status=404, body="not found")
 
 
