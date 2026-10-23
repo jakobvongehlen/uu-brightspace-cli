@@ -288,6 +288,7 @@ def test_login_keeps_the_api_details_owner_only(fake_uu, at_terminal, capsys):
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert api.load_account() == api.Account(FILESENDER_USER, FILESENDER_SECRET)
     assert fake_uu.filesender_logins == 1
+    assert fake_uu.filesender_terms and "Accepting \"SURFfilesender gebruiksvoorwaarden\"" in err
 
 
 @pytest.mark.browser

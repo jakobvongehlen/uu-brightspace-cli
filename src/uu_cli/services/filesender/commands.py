@@ -38,11 +38,32 @@ def fetch_account(ctx: BrowserContext) -> api.Account | None:
     page.goto(api.PROFILE, wait_until="load", timeout=30_000)
     if urlparse(page.url).hostname != urlparse(api.BASE_URL).hostname:
         return None
+    if accept_service_terms(page):
+        page.goto(api.PROFILE, wait_until="load", timeout=30_000)
     text = page.evaluate("""async (url) => {
         const r = await fetch(url, {credentials: "same-origin"});
         return r.ok ? await r.text() : "";
     }""", api.ACCOUNT_CONFIG)
     return api.parse_account_config(text)
+
+
+def accept_service_terms(page) -> bool:
+    """Accept the terms page SURFfilesender shows once before anything else; True when it was there.
+
+    It stands in front of every page, the profile with the API secret included, so the CLI
+    can't go on without it. It says what it accepted.
+    """
+    accept = page.locator(".serviceaup .service_aup_accept a")
+    if not accept.count():
+        return False
+    title = page.locator(".serviceaup h1").inner_text().strip()
+    terms = page.locator(".serviceaup a[target=_blank]").first
+    text = terms.inner_text().strip() if terms.count() else ""
+    link = terms.get_attribute("href") if terms.count() else CODE_OF_CONDUCT
+    print(f"[FILESENDER] Accepting \"{title}\" for you, once: {text} ({link})", file=sys.stderr)
+    with page.expect_navigation(wait_until="load", timeout=30_000):
+        accept.first.click()
+    return True
 
 
 def ensure_account(ctx: BrowserContext, args) -> api.Account | None:

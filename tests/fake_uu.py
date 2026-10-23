@@ -82,6 +82,14 @@ CONSENT = f"""<main><h1>Review your information that will be shared.</h1>
   <button type="submit" class="cta_consent_ok" name="accept_terms_button">Proceed to {{sp}}</button>
 </form></main>"""
 
+FILESENDER_TERMS = """<div class="fs-base-page serviceaup" data-service-aup-version="6">
+  <h1>SURFfilesender gebruiksvoorwaarden</h1>
+  <a href="https://edu.nl/8t9wf" target="_blank">Ik ga akkoord met de huisregels wanneer ik deze dienst gebruik.</a>
+  <div class="service_aup_accept"><a href="#" class="fs-button">Ik accepteer deze voorwaarden</a></div>
+</div>
+<script>document.querySelector('.service_aup_accept a').onclick = e => {
+  e.preventDefault(); location.href = '/?aup=accept'; };</script>"""
+
 HOME = """<h1>My Home</h1>
 <script>localStorage.setItem('D2L.Fetch.Tokens',
   JSON.stringify({"*:*:*": {"access_token": "TOKEN", "expires_at": 0}}));</script>"""
@@ -266,6 +274,7 @@ class FakeUU:
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
         self.filesender_secret = FILESENDER_SECRET  # "" when your profile has none
+        self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
         self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
         self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
         self.consents: list[str] = []  # services you gave consent for
@@ -563,7 +572,12 @@ class FakeUU:
         if path == urlparse(ACS["filesender"]).path:
             self.filesender_logins += 1
             return _redirect(route, f"{FILESENDER}/?s=user", cookie="SimpleSAMLAuthToken=t0k; Path=/")
+        if path == "/" and query.get("aup") == ["accept"] and logged_in:
+            self.filesender_terms = True
+            return _redirect(route, f"{FILESENDER}/?s=user")
         if path == "/":
+            if logged_in and not self.filesender_terms:  # as SURF's page is laid out
+                return _html(route, FILESENDER_TERMS)
             if logged_in:
                 return _html(route, "<h1>My profile</h1><h2>Remote authentication</h2>"
                                     '<a href="clidownload.php?config=1">Download Python CLI Client configuration</a>')
