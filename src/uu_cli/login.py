@@ -23,6 +23,9 @@ from uu_cli.auth import OtpRoute
 # How UU appears in SURFconext's institution picker (English or Dutch); not "UMC Utrecht".
 UU_IN_SURFCONEXT = re.compile(r"Utrecht University|Universiteit Utrecht")
 
+# UU's one-time code field (mfa.uu.nl).
+UU_CODE_FIELD = "#nffc"
+
 # How long the --auth browser window waits for you to finish logging in.
 WINDOW_TIMEOUT_S = 300
 
@@ -60,14 +63,15 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
     if not _reach_login_form(page, urlparse(start_url).hostname):
         print(f"[AUTH] ✓ Already logged in at UU: {page.url}", file=sys.stderr)
         return
-    print(f"[AUTH] At NISP form: {page.url}", file=sys.stderr)
-
-    print("[AUTH] Filling credentials...", file=sys.stderr)
-    page.fill("#Ecom_User_ID", solisid)
-    page.fill("#Ecom_Password", password)
-    page.click("#loginButton2")
-
-    print("[AUTH] Waiting for OTP form...", file=sys.stderr)
+    if page.locator("#Ecom_User_ID").count():
+        print(f"[AUTH] At NISP form: {page.url}", file=sys.stderr)
+        print("[AUTH] Filling credentials...", file=sys.stderr)
+        page.fill("#Ecom_User_ID", solisid)
+        page.fill("#Ecom_Password", password)
+        page.click("#loginButton2")
+        print("[AUTH] Waiting for OTP form...", file=sys.stderr)
+    else:
+        print(f"[AUTH] Still logged in at UU, but {name} wants a code too.", file=sys.stderr)
     target = urlparse(start_url).hostname
     otp_sel = _after_password(page, target)
     print(f"[AUTH] URL: {page.url}", file=sys.stderr)
@@ -133,16 +137,14 @@ def _after_password(page: Page, target_host: str | None, timeout_s: float = 20) 
     while time.monotonic() < deadline:
         try:
             host = urlparse(page.url).hostname or ""
-            if host == "login.uu.nl":
+            if host.endswith("surfconext.nl"):
+                _give_consent(page)
+            elif host != target_host:  # UU: login.uu.nl, and the code on mfa.uu.nl
                 if page.locator("#Ecom_Password").count():
                     if time.monotonic() - start > 5:  # the form came back
                         raise RuntimeError("UU didn't accept the Solis-id or password.")
-                else:
-                    otp_sel = page.evaluate(_OTP_FIELD_JS)
-                    if otp_sel:
-                        return otp_sel
-            elif host.endswith("surfconext.nl"):
-                _give_consent(page)
+                elif otp_sel := page.evaluate(_OTP_FIELD_JS):
+                    return otp_sel
             if host == target_host:
                 on_target_since = on_target_since or time.monotonic()
                 if time.monotonic() - on_target_since > 2:
@@ -259,7 +261,8 @@ def _wait_until_back(page: Page, target_host: str | None, timeout_s: float) -> s
 def _reach_login_form(page: Page, target_host: str | None, timeout_s: float = 30) -> bool:
     """Follow a service's redirects to the Solis-id form; False when they end on target_host instead.
 
-    Picks UU when SURFconext asks for an institution. Ending up (and staying) back on the
+    UU's code page counts as the form too: a service that wants MFA (bookings.uu.nl) gets
+    it asked even while UU's session lasts. Picks UU when SURFconext asks for an institution. Ending up (and staying) back on the
     service without a form means UU's session logged us in already.
     """
     deadline = time.monotonic() + timeout_s
@@ -267,7 +270,7 @@ def _reach_login_form(page: Page, target_host: str | None, timeout_s: float = 30
     on_target_since = None
     while time.monotonic() < deadline:
         try:
-            if page.locator("#Ecom_User_ID").count():
+            if page.locator("#Ecom_User_ID").count() or page.locator(UU_CODE_FIELD).count():
                 return True
             host = urlparse(page.url).hostname or ""
             if host.endswith("surfconext.nl"):

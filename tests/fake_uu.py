@@ -29,6 +29,7 @@ GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
 IDP = "https://login.uu.nl"
+MFA = "https://mfa.uu.nl"  # where UU asks the one-time code
 SOLISID = "1234567"
 PASSWORD = "correct horse"
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
@@ -62,7 +63,7 @@ LOGIN_FORM = """
 </form>"""
 
 OTP_FORM = """
-<form method="post" action="/nidp/app/login?sid=1&sp={sp}">
+<form method="post" action="https://mfa.uu.nl/osp/a/TOP/auth/app/contractcontinue?sp={sp}">
   <label for="nffc">Code from your authenticator app</label>
   <input id="nffc" name="nffc" type="text" autocomplete="one-time-code" maxlength="6">
   <button id="loginButton2" type="submit">Verify</button>
@@ -265,6 +266,7 @@ class FakeUU:
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
         self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
+        self.step_up: set[str] = set()  # services UU asks a code for even while you're logged in
         self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
         self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
         self.consents: list[str] = []  # services you gave consent for
@@ -280,6 +282,7 @@ class FakeUU:
         origin = f"{url.scheme}://{url.netloc}"
         handler = {
             IDP: lambda *a: self._idp(*a, by_hand=by_hand),
+            MFA: lambda *a: self._mfa(*a, by_hand=by_hand),
             BRIGHTSPACE: self._brightspace,
             KONJOIN: self._konjoin,
             SURFCONEXT: self._surfconext,
@@ -304,6 +307,8 @@ class FakeUU:
             if sp in VIA_SURFCONEXT:  # only SURFconext's picker links here
                 self.wayf_choices += 1
             if "IDP_SESSION=" in _cookies(req):  # single sign-on: still logged in at UU
+                if sp in self.step_up:  # but this service wants a code (MFA) every time
+                    return _redirect(route, f"{MFA}/osp/a/TOP/auth/oauth2/auth?sp={sp}")
                 return self._back_to(route, sp)
             you = _by_hand({"Ecom_User_ID": SOLISID, "Ecom_Password": PASSWORD}) if by_hand else ""
             return _html(route, LOGIN_FORM.format(sp=sp) + you)
@@ -312,13 +317,24 @@ class FakeUU:
             if form.get("Ecom_User_ID") == SOLISID and form.get("Ecom_Password") == PASSWORD:
                 if not self.asks_code:
                     return self._back_to(route, sp)
-                you = _by_hand({"nffc": pyotp.TOTP(TOTP_SECRET).now()}) if by_hand else ""
-                return _html(route, OTP_FORM.format(sp=sp) + you)
+                return _redirect(route, f"{MFA}/osp/a/TOP/auth/oauth2/auth?sp={sp}")
             return _html(route, "<p>Wrong Solis-id or password.</p>" + LOGIN_FORM.format(sp=sp))
-        code = form.get("nffc", "")
+        if query.get("sid") == ["2"] and req.method == "POST":  # back from the code page
+            return self._back_to(route, sp)
+        return route.fulfill(status=404, body="not found")
+
+    def _mfa(self, route, req, url, by_hand: bool = False) -> None:
+        """UU's code page, on its own host as the real one is."""
+        sp = parse_qs(url.query).get("sp", ["brightspace"])[0]
+        if req.method == "GET":
+            you = _by_hand({"nffc": pyotp.TOTP(TOTP_SECRET).now()}) if by_hand else ""
+            return _html(route, OTP_FORM.format(sp=sp) + you)
+        code = parse_qs(req.post_data or "").get("nffc", [""])[0]
         self.codes.append(code)
         if pyotp.TOTP(TOTP_SECRET).verify(code, valid_window=1):
-            return self._back_to(route, sp)
+            # A form post back to UU's login, which then sets its session cookie.
+            return _html(route, f'<form method="post" action="{IDP}/nidp/app/login?sid=2&sp={sp}">'
+                                '</form><script>document.forms[0].submit()</script>')
         return _html(route, "<p>Wrong code.</p>" + OTP_FORM.format(sp=sp))
 
     def _back_to(self, route, sp: str) -> None:

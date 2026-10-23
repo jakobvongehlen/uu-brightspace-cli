@@ -191,3 +191,15 @@ def test_consent_page_with_an_existing_uu_session(fake_uu, at_terminal, monkeypa
     assert code == 0, err
     assert "Logged in with your existing UU session." in err
     assert fake_uu.consents == ["edunl"] and len(fake_uu.codes) == 1
+
+
+@pytest.mark.browser
+def test_a_service_that_wants_a_code_while_still_logged_in(fake_uu, at_terminal, capsys):
+    """As bookings.uu.nl does (MFA): UU asks only the code, not the password again."""
+    run(brightspace, ["login"], capsys)
+    fake_uu.step_up = {"edunl"}
+
+    code, out, err = run(edunl, ["shorten", "https://example.org/a"], capsys)
+
+    assert code == 0, err
+    assert "wants a code too" in err and len(fake_uu.codes) == 2
