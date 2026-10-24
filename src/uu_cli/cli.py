@@ -16,6 +16,7 @@ SERVICES = {
     "gitlab": "uu_cli.services.gitlab.cli",
     "konjoin": "uu_cli.services.konjoin.cli",
     "library": "uu_cli.services.library.cli",
+    "osiris": "uu_cli.services.osiris.cli",
 }
 
 # Old service names that keep working.

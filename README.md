@@ -21,6 +21,9 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   Makes a short link, with an optional label, and lists yours.
 - **[SURFfilesender](https://filesender.surf.nl)** (`uu filesender`): sends large files to named
   people for a short while, optionally encrypted, and lists your transfers.
+- **[Osiris course catalogue](https://osiris-student.uu.nl/onderwijscatalogus/extern/cursus)**
+  (`uu osiris`): searches UU's courses by code, name, faculty, level, period, timeslot or
+  lecturer, and shows a course's page. No login needed.
 
 ## Features
 
@@ -41,8 +44,8 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   window (`--auth browser`) shows UU's own login page, so push should work there, but it
   hasn't been tried yet.
 - **UU only.** The login flow is written for UU's Solis-id login page.
-- **Can break** if UU, D2L, SURFconext, Konjoin, UU's library proxy, GitLab, edu.nl or
-  SURFfilesender change their pages.
+- **Can break** if UU, D2L, SURFconext, Konjoin, UU's library proxy, GitLab, edu.nl,
+  SURFfilesender or Osiris change their pages.
 
 ## Install
 
@@ -345,6 +348,27 @@ What SURF's [code of conduct](https://servicedesk.surf.nl/wiki/spaces/WIKI/pages
 SURF has no separate policy for the API (its `api_secret_aup_enabled` is off). Optional:
 `UU_FILESENDER_URL` for another FileSender.
 
+### Osiris course catalogue
+
+```bash
+uu osiris search statistics                                 # Code or name, start of a word
+uu osiris search --faculty science --level M --period 3 --timeslot A
+uu osiris search --teacher stellato --open                  # Open for enrolment now
+uu osiris search data --level 1 --level 2 --json            # Either level; as JSON
+uu osiris show INFOMEMD                                     # Description, enrolment, tests, lecturers
+uu osiris show INFOB1PICA --lang nl --year 2025             # In Dutch, last year's
+uu osiris filters                                           # What each filter takes
+```
+
+The [course catalogue](https://osiris-student.uu.nl/onderwijscatalogus/extern/cursus) of Osiris
+Student is public, so `uu osiris` needs no login and no browser: it calls the two endpoints the
+catalogue page calls, its search (an Elasticsearch query) and a course's page. `search` finds
+the start of a word in the code or name, as the site does, best match first; `--limit` shows
+more than 25. A filter takes a value from `filters` by its code (`--level M`), its name
+(`--level master`), a whole word (`--faculty science`) or a part of it, in any case; given twice,
+either value will do. `--year` picks another academic year (default: the one the site opens on),
+`--lang nl` the Dutch names and texts.
+
 ## Docker
 
 ```sh
@@ -379,6 +403,8 @@ src/uu_cli/
     gitlab/            api.py (/api/v4 from a GitLab page, with its CSRF token),
                        commands.py (its own Solis-ID sign-in), cli.py
     konjoin/           api.py (/api/project), commands.py, cli.py
+    osiris/            api.py (the course catalogue's search and course pages, no login),
+                       commands.py, cli.py
     library/           proxy.py (the proxy, in a window), elsevier.py (the API),
                        articles.py (DOIs, saved PDFs), cli.py
 brightspace-cli.py     the old entry point, kept for existing scripts and the Docker image
