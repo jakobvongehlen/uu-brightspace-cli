@@ -29,6 +29,7 @@ GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
 IDP = "https://login.uu.nl"
+MFA = "https://mfa.uu.nl"  # where UU asks the one-time code
 SOLISID = "1234567"
 PASSWORD = "correct horse"
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
@@ -62,7 +63,7 @@ LOGIN_FORM = """
 </form>"""
 
 OTP_FORM = """
-<form method="post" action="/nidp/app/login?sid=1&sp={sp}">
+<form method="post" action="https://mfa.uu.nl/osp/a/TOP/auth/app/contractcontinue?sp={sp}">
   <label for="nffc">Code from your authenticator app</label>
   <input id="nffc" name="nffc" type="text" autocomplete="one-time-code" maxlength="6">
   <button id="loginButton2" type="submit">Verify</button>
@@ -73,6 +74,22 @@ WAYF = f"""<h1>Select an institution to log in</h1>
   <li><a href="{SURFCONEXT}/wayf/umc">UMC Utrecht</a></li>
   <li><a href="{IDP}/nidp/app/login?sp={{sp}}">Utrecht University</a></li>
 </ul>"""
+
+# SURFconext's one-time page before it lets a service know who you are, as the real one is laid out.
+CONSENT = f"""<main><h1>Review your information that will be shared.</h1>
+<p>{{sp}} will receive</p><p>Identifier</p>
+<form id="accept" method="post" action="{SURFCONEXT}/authentication/idp/process-consent?sp={{sp}}">
+  <input type="hidden" name="consent" value="yes">
+  <button type="submit" class="cta_consent_ok" name="accept_terms_button">Proceed to {{sp}}</button>
+</form></main>"""
+
+FILESENDER_TERMS = """<div class="fs-base-page serviceaup" data-service-aup-version="6">
+  <h1>SURFfilesender gebruiksvoorwaarden</h1>
+  <a href="https://edu.nl/8t9wf" target="_blank">Ik ga akkoord met de huisregels wanneer ik deze dienst gebruik.</a>
+  <div class="service_aup_accept"><a href="#" class="fs-button">Ik accepteer deze voorwaarden</a></div>
+</div>
+<script>document.querySelector('.service_aup_accept a').onclick = e => {
+  e.preventDefault(); location.href = '/?aup=accept'; };</script>"""
 
 HOME = """<h1>My Home</h1>
 <script>localStorage.setItem('D2L.Fetch.Tokens',
@@ -212,18 +229,9 @@ EDUNL_ROW = """<tr>
 EDUNL_CSRF = "edunl-csrf"
 EDUNL_PER_PAGE = 2
 
-# SURFfilesender: your id there and the API secret its profile page gives you (made up).
-FILESENDER_USER = "0123456789abcdef0123456789abcdef01234567"
-FILESENDER_SECRET = "fakesecret0fakesecret0fakesecret0fakesecret0fakesecret0fake0000"
-# What "Download Python CLI Client configuration" serves (clidownload.php?config=1).
-FILESENDER_INI = """[system]
-base_url = https://filesender.surf.nl/rest.php
-default_transfer_days_valid = 14
-
-[user]
-username = {user}
-apikey = {secret}
-"""
+# SURFfilesender: what its upload page gives a logged-in session (made up).
+FILESENDER_TOKEN = "sec-token-1"   # <body data-security-token>
+FILESENDER_CSRF = "csrfp-token-1"  # the csrfptoken cookie
 
 
 def make_jwt(exp: float) -> str:
@@ -257,7 +265,11 @@ class FakeUU:
         self.edunl_links: list[dict] = []  # your links, newest first: code, url, label, clicks, date
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
-        self.filesender_secret = FILESENDER_SECRET  # "" when your profile has none
+        self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
+        self.step_up: set[str] = set()  # services UU asks a code for even while you're logged in
+        self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
+        self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
+        self.consents: list[str] = []  # services you gave consent for
 
     def install(self, ctx, by_hand: bool = False) -> None:
         """Serve the fake to ctx. by_hand: someone at this browser fills in UU's forms (--auth browser)."""
@@ -270,6 +282,7 @@ class FakeUU:
         origin = f"{url.scheme}://{url.netloc}"
         handler = {
             IDP: lambda *a: self._idp(*a, by_hand=by_hand),
+            MFA: lambda *a: self._mfa(*a, by_hand=by_hand),
             BRIGHTSPACE: self._brightspace,
             KONJOIN: self._konjoin,
             SURFCONEXT: self._surfconext,
@@ -294,23 +307,52 @@ class FakeUU:
             if sp in VIA_SURFCONEXT:  # only SURFconext's picker links here
                 self.wayf_choices += 1
             if "IDP_SESSION=" in _cookies(req):  # single sign-on: still logged in at UU
-                return _redirect(route, ACS[sp])
+                if sp in self.step_up:  # but this service wants a code (MFA) every time
+                    return _redirect(route, f"{MFA}/osp/a/TOP/auth/oauth2/auth?sp={sp}")
+                return self._back_to(route, sp)
             you = _by_hand({"Ecom_User_ID": SOLISID, "Ecom_Password": PASSWORD}) if by_hand else ""
             return _html(route, LOGIN_FORM.format(sp=sp) + you)
         form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
         if query.get("sid") == ["0"]:
             if form.get("Ecom_User_ID") == SOLISID and form.get("Ecom_Password") == PASSWORD:
-                you = _by_hand({"nffc": pyotp.TOTP(TOTP_SECRET).now()}) if by_hand else ""
-                return _html(route, OTP_FORM.format(sp=sp) + you)
+                if not self.asks_code:
+                    return self._back_to(route, sp)
+                return _redirect(route, f"{MFA}/osp/a/TOP/auth/oauth2/auth?sp={sp}")
             return _html(route, "<p>Wrong Solis-id or password.</p>" + LOGIN_FORM.format(sp=sp))
-        code = form.get("nffc", "")
+        if query.get("sid") == ["2"] and req.method == "POST":  # back from the code page
+            return self._back_to(route, sp)
+        return route.fulfill(status=404, body="not found")
+
+    def _mfa(self, route, req, url, by_hand: bool = False) -> None:
+        """UU's code page, on its own host as the real one is."""
+        sp = parse_qs(url.query).get("sp", ["brightspace"])[0]
+        if req.method == "GET":
+            you = _by_hand({"nffc": pyotp.TOTP(TOTP_SECRET).now()}) if by_hand else ""
+            return _html(route, OTP_FORM.format(sp=sp) + you)
+        code = parse_qs(req.post_data or "").get("nffc", [""])[0]
         self.codes.append(code)
         if pyotp.TOTP(TOTP_SECRET).verify(code, valid_window=1):
-            return _redirect(route, ACS[sp], cookie="IDP_SESSION=1; Path=/")
+            # A form post back to UU's login, which then sets its session cookie.
+            return _html(route, f'<form method="post" action="{IDP}/nidp/app/login?sid=2&sp={sp}">'
+                                '</form><script>document.forms[0].submit()</script>')
         return _html(route, "<p>Wrong code.</p>" + OTP_FORM.format(sp=sp))
+
+    def _back_to(self, route, sp: str) -> None:
+        """Logged in at UU: back to the service, past SURFconext's consent page when it asks."""
+        if sp in self.consent_needed:
+            return _redirect(route, f"{SURFCONEXT}/authentication/sp/consume-assertion?sp={sp}",
+                             cookie="IDP_SESSION=1; Path=/")
+        return _redirect(route, ACS[sp], cookie="IDP_SESSION=1; Path=/")
 
     # ── SURFconext, in front of Konjoin and edu.nl ────────────────────────────
     def _surfconext(self, route, req, url) -> None:
+        sp = parse_qs(url.query).get("sp", ["konjoin"])[0]
+        if url.path == "/authentication/sp/consume-assertion":
+            return _html(route, CONSENT.format(sp=sp))
+        if url.path == "/authentication/idp/process-consent" and req.method == "POST":
+            self.consents.append(sp)
+            self.consent_needed.discard(sp)
+            return _redirect(route, ACS[sp])
         if url.path.startswith("/authentication/idp/single-sign-on"):
             sp = parse_qs(url.query).get("sp", ["konjoin"])[0]  # who asked, as the real request says
             return _html(route, WAYF.format(sp=sp))
@@ -535,17 +577,18 @@ class FakeUU:
             return _redirect(route, f"{SURFCONEXT}/authentication/idp/single-sign-on?SAMLRequest=x&sp=filesender")
         if path == urlparse(ACS["filesender"]).path:
             self.filesender_logins += 1
-            return _redirect(route, f"{FILESENDER}/?s=user", cookie="SimpleSAMLAuthToken=t0k; Path=/")
+            return _redirect(route, f"{FILESENDER}/?s=upload", cookie="SimpleSAMLAuthToken=t0k; Path=/")
+        if path == "/" and query.get("aup") == ["accept"] and logged_in:
+            self.filesender_terms = True
+            return _redirect(route, f"{FILESENDER}/?s=upload")
         if path == "/":
-            if logged_in:
-                return _html(route, "<h1>My profile</h1><h2>Remote authentication</h2>"
-                                    '<a href="clidownload.php?config=1">Download Python CLI Client configuration</a>')
+            if logged_in and not self.filesender_terms:  # as SURF's page is laid out
+                return _html(route, FILESENDER_TERMS)
+            if logged_in:  # the upload page, with the session's tokens as SURF's sets them
+                return _html(route, "<h1>Upload</h1><script>"
+                                    f"document.body.dataset.securityToken = '{FILESENDER_TOKEN}';"
+                                    f"document.cookie = 'csrfptoken={FILESENDER_CSRF}; path=/';</script>")
             return _html(route, '<h1>Welkom bij SURFfilesender!</h1><a id="btn_logon" href="#">Aanmelden</a>')
-        if path == "/clidownload.php" and query.get("config") == ["1"]:
-            if not logged_in:
-                return route.fulfill(status=500, body="Authentication required")
-            ini = FILESENDER_INI.format(user=FILESENDER_USER, secret=self.filesender_secret)
-            return route.fulfill(status=200, body=ini, headers={"Content-Type": "text/plain; charset=utf-8"})
         route.fulfill(status=404, body="not found")
 
 

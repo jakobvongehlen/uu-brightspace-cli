@@ -1,23 +1,22 @@
-"""SURFfilesender: the signed REST calls against a fake server, and the login in a real Chromium."""
+"""SURFfilesender: the REST calls with the login session against a fake server, and the login in a real Chromium."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
-import stat
 import time
-from urllib.parse import urlparse
+from contextlib import contextmanager
+from urllib.parse import parse_qs, urlparse
 
 import pyotp
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from fake_uu import FILESENDER_SECRET, FILESENDER_USER, PASSWORD, SOLISID, TOTP_SECRET
+from fake_uu import FILESENDER, FILESENDER_CSRF, FILESENDER_TOKEN, PASSWORD, SOLISID, TOTP_SECRET
 from uu_cli import auth
 from uu_cli.services.brightspace.cli import main as brightspace
-from uu_cli.services.filesender import api
+from uu_cli.services.filesender import api, commands
 from uu_cli.services.filesender.cli import main as filesender
 
 CONFIG_JS = """window.filesender.config = {
@@ -32,12 +31,13 @@ CONFIG_JS = """window.filesender.config = {
 
 
 class FakeFilesender:
-    """The REST API, checking each signature the way FileSender's AuthRemote.class.php does."""
+    """The REST API, refusing a request without the session the way FileSender and csrfprotector do."""
 
-    def __init__(self):
-        self.user, self.secret = "uid-42", "s3cret"
+    def __init__(self, logged_in=lambda: True):
+        self.logged_in = logged_in  # whether the request carries a session cookie
         self.chunk = 4
         self.requests: list[tuple[str, str, dict, bytes | None]] = []
+        self.headers: list[dict] = []
         self.transfers: dict[int, dict] = {}
         self.chunks: dict[int, dict[int, bytes]] = {}
         self.files_done: list[int] = []
@@ -46,22 +46,24 @@ class FakeFilesender:
         self.fail_chunk: tuple[int, int] | None = None
 
     def __call__(self, method, url, headers, body):
+        status, data = self._answer(method, url, headers, body)
+        return status, {"Content-Type": "application/json"}, data
+
+    def _answer(self, method, url, headers, body):
         u = urlparse(url)
         if u.path == "/rest.php/info":
             return 200, json.dumps({"upload_chunk_size": self.chunk}).encode()
         if u.path == "/filesender-config.js.php":
             return 200, CONFIG_JS.encode()
         path = u.path.removeprefix("/rest.php")
-        params = dict(p.split("=", 1) for p in u.query.split("&"))
-        received = params.pop("signature")
-        signed = f"{method.lower()}&{u.netloc}/rest.php{path}?" + "&".join(sorted(f"{k}={v}" for k, v in params.items()))
-        signed = signed.encode() + (b"&" + body if body else b"")
-        if params.get("remote_user") != self.user or received != hmac.new(
-                self.secret.encode(), signed, hashlib.sha1).hexdigest():
-            return 403, json.dumps({"message": "auth_remote_signature_check_failed"}).encode()
-        if time.time() - int(params["timestamp"]) - 15 > 0:
-            return 403, json.dumps({"message": "auth_remote_too_late"}).encode()
+        params = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if not self.logged_in():
+            return 403, json.dumps({"message": "rest_authentication_required"}).encode()
+        if method != "GET" and (headers.get("X-Filesender-Security-Token") != FILESENDER_TOKEN
+                                or headers.get("csrfptoken") != FILESENDER_CSRF):
+            return 403, json.dumps({"message": "rest_xsrf_token_did_not_match"}).encode()
         self.requests.append((method, path, params, body))
+        self.headers.append(headers)
         return self._route(method, path.strip("/").split("/"), params, body)
 
     def _route(self, method, parts, params, body):
@@ -107,10 +109,14 @@ class FakeFilesender:
 
 @pytest.fixture
 def fs(monkeypatch) -> FakeFilesender:
+    """The fake behind a logged-in session, as `connected` gives it after the upload page."""
     fake = FakeFilesender()
-    monkeypatch.setattr(api, "_send", fake)
-    monkeypatch.setenv("UU_FILESENDER_USER", fake.user)
-    monkeypatch.setenv("UU_FILESENDER_API_SECRET", fake.secret)
+
+    @contextmanager
+    def connected(args):
+        yield api.Session(send=fake, token=FILESENDER_TOKEN, csrf=FILESENDER_CSRF)
+
+    monkeypatch.setattr(commands, "connected", connected)
     return fake
 
 
@@ -128,7 +134,7 @@ def run(main, argv, capsys):
     return exc.value.code, out, err
 
 
-def test_send_signs_every_request_and_uploads_in_chunks(fs, file, capsys):
+def test_send_uploads_in_chunks_with_the_sessions_tokens(fs, file, capsys):
     code, out, err = run(filesender, ["send", str(file), "--to", "joris@example.org", "--accept-terms"], capsys)
 
     assert code == 0, err
@@ -136,6 +142,8 @@ def test_send_signs_every_request_and_uploads_in_chunks(fs, file, capsys):
         ("POST", "/transfer"), ("PUT", "/file/100/chunk/0"), ("PUT", "/file/100/chunk/4"),
         ("PUT", "/file/100/chunk/8"), ("PUT", "/file/100"), ("PUT", "/transfer/1")]
     assert fs.uploaded(100) == b"hello world!"
+    assert all(h["X-Filesender-Security-Token"] == FILESENDER_TOKEN for h in fs.headers)
+    assert all(h["csrfptoken"] == FILESENDER_CSRF for h in fs.headers)
     assert fs.files_done == [100] and fs.completed == [1] and fs.deleted == []
     sent = fs.sent()
     assert sent["recipients"] == ["joris@example.org"] and sent["aup_checked"] == 1
@@ -173,13 +181,16 @@ def test_a_failed_chunk_deletes_the_transfer(fs, file, capsys):
     assert fs.deleted == [1] and fs.completed == []
 
 
-def test_a_wrong_secret_says_what_to_do(fs, file, monkeypatch, capsys):
-    monkeypatch.setenv("UU_FILESENDER_API_SECRET", "an-old-secret")
+def test_a_stale_security_token_says_so(fs, file, monkeypatch, capsys):
+    @contextmanager
+    def connected(args):
+        yield api.Session(send=fs, token="an-old-token", csrf=FILESENDER_CSRF)
+    monkeypatch.setattr(commands, "connected", connected)
 
     code, _, err = run(filesender, ["send", str(file), "--to", "joris@example.org", "--accept-terms"], capsys)
 
-    assert code == 1
-    assert "API secret doesn't match" in err and "uu filesender login" in err
+    assert code == 1 and "security token didn't match" in err
+    assert fs.transfers == {}
 
 
 def test_encrypted_chunks_open_with_the_password(fs, file, monkeypatch, capsys):
@@ -241,23 +252,12 @@ def test_a_folder_is_not_sent(fs, tmp_path, capsys):
     assert fs.requests == []
 
 
-def test_send_before_login_says_how(file, monkeypatch, capsys):
-    monkeypatch.delenv("UU_FILESENDER_USER", raising=False)
-    monkeypatch.delenv("UU_FILESENDER_API_SECRET", raising=False)
+def test_a_session_that_ran_out_midway_says_so(fs, file, capsys):
+    fs.logged_in = lambda: False
 
     code, _, err = run(filesender, ["send", str(file), "--to", "a@example.org", "--accept-terms"], capsys)
 
-    assert code == 1 and "uu filesender login" in err
-
-
-def test_the_signature_matches_filesenders_own_client():
-    """The same bytes filesender.py signs: method&host/rest.php/path?sorted query&body."""
-    params = {"remote_user": "uid-42", "timestamp": "1700000000", "key": "puid-1-0"}
-    expected = hmac.new(b"s3cret", b"put&filesender.surf.nl/rest.php/file/100?key=puid-1-0"
-                        b"&remote_user=uid-42&timestamp=1700000000&" + b'{"complete":true}',
-                        hashlib.sha1).hexdigest()
-
-    assert api.signature("s3cret", "put", "/file/100", params, b'{"complete":true}') == expected
+    assert code == 1 and "not logged in" in err and "uu filesender login" in err
 
 
 # ── login, in a real Chromium against the offline fake ────────────────────────
@@ -277,21 +277,41 @@ def at_terminal(monkeypatch):
     return prompts
 
 
+@pytest.fixture
+def through_the_browser(monkeypatch) -> FakeFilesender:
+    """The REST fake behind the CLI's browser transport, logged in when the profile has the cookie."""
+    def transport(ctx):
+        fake.logged_in = lambda: any(c["name"] == "SimpleSAMLAuthToken" for c in ctx.cookies(FILESENDER))
+        return fake
+    fake = FakeFilesender()
+    monkeypatch.setattr(commands, "_browser_transport", transport)
+    return fake
+
+
 @pytest.mark.browser
-def test_login_keeps_the_api_details_owner_only(fake_uu, at_terminal, capsys):
+def test_login_through_surfconext_and_the_terms_page(fake_uu, through_the_browser, at_terminal, capsys):
     code, _, err = run(filesender, ["login"], capsys)
 
     assert code == 0, err
     assert "SURFconext: choosing Utrecht University" in err
-    saved = api.account_file()
-    assert json.loads(saved.read_text()) == {"username": FILESENDER_USER, "secret": FILESENDER_SECRET}
-    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
-    assert api.load_account() == api.Account(FILESENDER_USER, FILESENDER_SECRET)
     assert fake_uu.filesender_logins == 1
+    assert fake_uu.filesender_terms and "Accepting \"SURFfilesender gebruiksvoorwaarden\"" in err
 
 
 @pytest.mark.browser
-def test_one_code_covers_brightspace_and_filesender(fake_uu, at_terminal, monkeypatch, capsys):
+def test_send_logs_in_and_uploads_with_the_pages_tokens(fake_uu, through_the_browser, at_terminal,
+                                                       file, capsys):
+    code, out, err = run(filesender, ["send", str(file), "--to", "joris@example.org", "--accept-terms"],
+                         capsys)
+
+    assert code == 0, err
+    assert fake_uu.filesender_logins == 1 and through_the_browser.completed == [1]
+    assert through_the_browser.uploaded(100) == b"hello world!"
+
+
+@pytest.mark.browser
+def test_one_code_covers_brightspace_and_filesender(fake_uu, through_the_browser, at_terminal,
+                                                    monkeypatch, capsys):
     run(brightspace, ["login"], capsys)
     monkeypatch.setattr(auth, "interactive", lambda: False)
 
@@ -303,11 +323,12 @@ def test_one_code_covers_brightspace_and_filesender(fake_uu, at_terminal, monkey
 
 
 @pytest.mark.browser
-def test_login_without_an_api_secret_says_where_to_make_one(fake_uu, at_terminal, capsys):
-    fake_uu.filesender_secret = ""
+def test_the_session_is_kept_for_the_next_run(fake_uu, through_the_browser, at_terminal,
+                                              monkeypatch, capsys):
+    run(filesender, ["login"], capsys)
+    monkeypatch.setattr(auth, "interactive", lambda: False)
 
-    code, _, err = run(filesender, ["login"], capsys)
+    code, out, err = run(filesender, ["transfers"], capsys)
 
-    assert code == 1
-    assert "no API secret" in err and "?s=user" in err
-    assert not api.account_file().exists()
+    assert code == 0, err
+    assert out == "No transfers.\n" and fake_uu.filesender_logins == 1

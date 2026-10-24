@@ -6,13 +6,13 @@ import getpass
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
-from playwright.sync_api import BrowserContext
+from playwright.sync_api import BrowserContext, Error as PlaywrightError, sync_playwright
 
-from uu_cli import auth
+from uu_cli import auth, browser
 from uu_cli.login import log_in, single_sign_on
 from uu_cli.services.filesender import api
 
@@ -27,63 +27,95 @@ UNENCRYPTED = ("[FILESENDER] Not encrypted: SURF's code of conduct says not to s
                "recipients for 4 months.")
 
 
-# ── login: the API details from your profile page ─────────────────────────────
+# ── login: a browser session on SURFfilesender ────────────────────────────────
 
-def fetch_account(ctx: BrowserContext) -> api.Account | None:
-    """Your username and API secret, from the profile page's configuration download.
+def accept_service_terms(page) -> bool:
+    """Accept the terms page SURFfilesender shows once before anything else; True when it was there.
 
-    Opening the profile page first makes the secret when you have none yet.
+    It stands in front of every page, the upload page included, so the CLI can't go on
+    without it. It says what it accepted.
     """
+    accept = page.locator(".serviceaup .service_aup_accept a")
+    if not accept.count():
+        return False
+    title = page.locator(".serviceaup h1").inner_text().strip()
+    terms = page.locator(".serviceaup a[target=_blank]").first
+    text = terms.inner_text().strip() if terms.count() else ""
+    link = terms.get_attribute("href") if terms.count() else CODE_OF_CONDUCT
+    print(f"[FILESENDER] Accepting \"{title}\" for you, once: {text} ({link})", file=sys.stderr)
+    with page.expect_navigation(wait_until="load", timeout=30_000):
+        accept.first.click()
+    return True
+
+
+def _browser_transport(ctx: BrowserContext) -> api.Transport:
+    """Requests that carry the browser profile's cookies, as the upload page's own do."""
+    def send(method: str, url: str, headers: dict, body: bytes | None):
+        resp = ctx.request.fetch(url, method=method, headers=headers, data=body,
+                                 timeout=api.TIMEOUT_S * 1000, fail_on_status_code=False)
+        return resp.status, resp.headers, resp.body()
+    return send
+
+
+def session_from_page(ctx: BrowserContext) -> api.Session | None:
+    """The upload page's session, or None when it isn't logged in."""
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    page.goto(api.PROFILE, wait_until="load", timeout=30_000)
+    page.goto(api.UPLOAD, wait_until="load", timeout=30_000)
     if urlparse(page.url).hostname != urlparse(api.BASE_URL).hostname:
         return None
-    text = page.evaluate("""async (url) => {
-        const r = await fetch(url, {credentials: "same-origin"});
-        return r.ok ? await r.text() : "";
-    }""", api.ACCOUNT_CONFIG)
-    return api.parse_account_config(text)
+    if accept_service_terms(page):
+        page.goto(api.UPLOAD, wait_until="load", timeout=30_000)
+    session = api.Session(
+        send=_browser_transport(ctx),
+        token=page.locator("body").get_attribute("data-security-token") or "",
+        csrf=next((c["value"] for c in ctx.cookies(api.BASE_URL) if c["name"] == "csrfptoken"), ""))
+    try:
+        api.transfers(session)  # refused without a login
+    except api.NotLoggedIn:
+        return None
+    return session
 
 
-def ensure_account(ctx: BrowserContext, args) -> api.Account | None:
-    """Log in unless already in (an existing UU session needs no code), then read the API details."""
-    account = fetch_account(ctx)
-    if account:
-        return account
+def open_session(ctx: BrowserContext, args) -> api.Session | None:
+    """Log in unless already in (an existing UU session needs no code); the session for the API."""
+    session = session_from_page(ctx)
+    if session:
+        return session
     print("[AUTH] Logging in to SURFfilesender...", file=sys.stderr)
-    if single_sign_on(ctx, api.LOGIN) and (account := fetch_account(ctx)):
+    if single_sign_on(ctx, api.LOGIN) and (session := session_from_page(ctx)):
         print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return account
+        return session
     if not auth.ready_to_login(args):
         print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
         return None
     log_in(ctx, api.LOGIN, args, name="SURFfilesender")
-    account = fetch_account(ctx)
-    if not account:
-        print(f"ERROR: Logged in, but your profile has no API secret. Open {api.PROFILE}, "
-              "make one under \"Remote authentication\", and run this again.", file=sys.stderr)
-    return account
+    session = session_from_page(ctx)
+    if not session:
+        print("ERROR: Logged in, but SURFfilesender still doesn't see a session.", file=sys.stderr)
+    return session
 
 
-def cmd_login(ctx: BrowserContext, args) -> int:
-    account = ensure_account(ctx, args)
-    if not account:
-        return 1
-    path = api.save_account(account)
-    print(f"Logged in to SURFfilesender; your API details are in {path} (only you can read it).",
-          file=sys.stderr)
+@contextmanager
+def connected(args):
+    """A browser on SURFfilesender for the length of a command: yields its session, or None."""
+    with sync_playwright() as pw:
+        ctx = browser.launch(pw, args.session_dir)
+        browser.own_files_only(ctx, urlparse(api.BASE_URL).hostname)
+        try:
+            yield open_session(ctx, args)
+        finally:
+            browser.save_session(ctx, args.session_dir)
+
+
+def cmd_login(args) -> int:
+    with connected(args) as session:
+        if not session:
+            return 1
+    print("Logged in to SURFfilesender.", file=sys.stderr)
     return 0
 
 
 # ── send and list ──────────────────────────────────────────────────────────────
-
-def _account() -> api.Account | None:
-    account = api.load_account()
-    if not account:
-        print("ERROR: No SURFfilesender API details yet: run `uu filesender login` first.",
-              file=sys.stderr)
-    return account
-
 
 def _password() -> str | None:
     """The encryption password: UU_FILESENDER_PASSWORD, or typed twice. Never a flag (ps, history)."""
@@ -115,9 +147,6 @@ def cmd_send(args) -> int:
     if args.days is not None and args.days < 1:
         print("ERROR: --days is at least 1.", file=sys.stderr)
         return 2
-    account = _account()
-    if not account:
-        return 1
     password = None
     if args.encrypt:
         password = _password()
@@ -127,14 +156,17 @@ def cmd_send(args) -> int:
         print(UNENCRYPTED, file=sys.stderr)
 
     try:
-        transfer = api.send(account, files, recipients, subject=args.subject, message=args.message,
-                            days=args.days, password=password,
-                            progress=lambda text: print(f"[FILESENDER] {text}", file=sys.stderr))
+        with connected(args) as session:
+            if not session:
+                return 1
+            transfer = api.send(session, files, recipients, subject=args.subject,
+                                message=args.message, days=args.days, password=password,
+                                progress=lambda text: print(f"[FILESENDER] {text}", file=sys.stderr))
     except api.FilesenderError as err:
         print(f"ERROR: SURFfilesender: {err}", file=sys.stderr)
         return 1
-    except requests.RequestException as err:  # no network, a proxy, TLS
-        print(f"ERROR: Could not reach SURFfilesender: {err}", file=sys.stderr)
+    except PlaywrightError as err:  # no network, a proxy, TLS
+        print(f"ERROR: Could not reach SURFfilesender: {str(err).splitlines()[0]}", file=sys.stderr)
         return 1
     print(f"Sent {len(files)} file{'s' if len(files) != 1 else ''} to {', '.join(recipients)}; "
           f"available until {_date(transfer.get('expires'))}.")
@@ -145,16 +177,16 @@ def cmd_send(args) -> int:
 
 
 def cmd_transfers(args) -> int:
-    account = _account()
-    if not account:
-        return 1
     try:
-        rows = api.transfers(account)
+        with connected(args) as session:
+            if not session:
+                return 1
+            rows = api.transfers(session)
     except api.FilesenderError as err:
         print(f"ERROR: SURFfilesender: {err}", file=sys.stderr)
         return 1
-    except requests.RequestException as err:
-        print(f"ERROR: Could not reach SURFfilesender: {err}", file=sys.stderr)
+    except PlaywrightError as err:
+        print(f"ERROR: Could not reach SURFfilesender: {str(err).splitlines()[0]}", file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
