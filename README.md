@@ -369,36 +369,36 @@ SURF has no separate policy for the API (its `api_secret_aup_enabled` is off). O
 
 ### Bookings
 
+[bookings.uu.nl](https://bookings.uu.nl) is the University Library's booking site (Springshare
+LibCal): study spaces and group rooms in the City Centre and at Utrecht Science Park, up to
+two days ahead, and meeting rooms for staff.
+
 ```sh
-uu bookings places                                         # The booking pages
-uu bookings options UBUSPseats                             # Its categories, types and floors
+uu bookings places                       # The booking pages, e.g. UBUSPseats, groupubb
+uu bookings options UBUSPseats           # A page's categories, types and floors
+
+# Free spaces (--date defaults to today)
 uu bookings search UBUSPseats --date 2026-10-25 --from 10:00 --until 12:00 --zone 6th --power
-uu bookings search groupubb --from 13:00 --until 15:00     # Group rooms, today
+
+# Book one by the id or name that search shows
 uu bookings book UBUSPseats 97740 --date 2026-10-25 --from 10:00 --until 12:00 --accept-terms
-uu bookings list                                           # Upcoming ones you booked here
-uu bookings show 'https://bookings.uu.nl/equipment/cancel?id=…'   # The email's cancel link
-uu bookings cancel 'https://bookings.uu.nl/equipment/cancel?id=…'
+
+uu bookings list                         # Your upcoming bookings made with `book`
+uu bookings show   '<cancel link>'       # What's booked on a confirmation email
+uu bookings cancel '<cancel link>'       # Cancel all of it, or one with --booking <id>
 ```
 
-[bookings.uu.nl](https://bookings.uu.nl) is the University Library's booking site (Springshare
-LibCal): study spaces and group rooms in the City Centre and at Utrecht Science Park, at most
-two days ahead, and meeting rooms for staff. Its login goes through SURFconext and UU's
-Solis-id page, but asks UU for a code every time (MFA), even while UU's session from another
-service lasts; the session it gets is then kept like the others.
+- **Login:** through SURFconext and your Solis-id like the other services, but UU asks for a
+  code every time, even when you're already logged in elsewhere.
+- **Filters:** `--zone`, `--category` and `--type` take a number or part of a name from
+  `options`. `--accessible`, `--power` and `--pc` narrow the results further.
+- **Terms:** booking means agreeing to the library's house rules, so `book` needs
+  `--accept-terms`. If the site refuses the booking, the space is released again.
+- **Your bookings:** the site has no list of them. `book` saves each one in `bookings.json`
+  next to the token, and `list` reads that file. To see or cancel a booking, pass
+  `show`/`cancel` the cancel link from the confirmation email (or just its code).
 
-`search` lists the free spaces with an id, as the search on the site does; a space that is
-free only at another time says so. `--zone`, `--category` and `--type` take a number or part
-of a name from `options`, and `--accessible`, `--power` and `--pc` narrow it down. `book` takes
-the id or the name: it holds the space through its "Book Now" button and submits the booking
-form with your name and email from your login. Booking means agreeing to the page's terms
-(the library's opening hours and house rules), so `book` only goes ahead with
-`--accept-terms`. When the site refuses, the held space is given back.
-
-bookings.uu.nl has no page that lists your bookings: each confirmation email has a cancel link
-with a code that only that email carries. So `book` keeps its own list in `bookings.json` next
-to the token, which `list` shows, and `show` and `cancel` take the email's cancel link (or its
-code). `show` lists what is still booked on it, `cancel` cancels all of it, or one booking with
-`--booking <id>` from `show`. Optional: `UU_BOOKINGS_URL`.
+Optional: `UU_BOOKINGS_URL`.
 
 ### Osiris course catalogue
 
