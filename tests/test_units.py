@@ -13,7 +13,7 @@ from uu_cli import paths
 from uu_cli.auth import credentials
 from uu_cli.services.brightspace import api
 from uu_cli.services.brightspace.sheets import extract_google_sheets_urls, parse_sheet_deadlines
-from uu_cli.services.brightspace.sync import description_files
+from uu_cli.services.brightspace.sync import course_dir, description_files
 
 
 # ── tokens ────────────────────────────────────────────────────────────────────
@@ -107,6 +107,32 @@ def test_description_files_takes_course_file_quicklinks():
         ("https://uu.brightspace.com/d2l/common/dialogs/quickLink/quickLink.d2l"
          "?ou=1&type=coursefile&fileId=week2%2Fnotes.pdf", "notes.pdf"),
     ]
+
+
+# ── course folders ────────────────────────────────────────────────────────────
+def test_course_dir_is_named_after_the_course(tmp_path):
+    assert course_dir(tmp_path, "4242", "2026-2027 1-GS Data/AI (INFOMX)") == \
+        tmp_path / "2026-2027 1-GS Data_AI (INFOMX)"
+    assert course_dir(tmp_path, "4242", None) == tmp_path / "4242"
+    assert course_dir(tmp_path, "4242", " ") == tmp_path / "4242"
+
+
+def test_course_dir_renames_the_org_unit_folder(tmp_path):
+    (tmp_path / "4242").mkdir()
+    (tmp_path / "4242" / "notes.txt").write_text("mine")
+
+    named = course_dir(tmp_path, "4242", "Fake Course")
+
+    assert (named / "notes.txt").read_text() == "mine"
+    assert not (tmp_path / "4242").exists()
+
+
+def test_course_dir_keeps_both_when_the_named_folder_exists(tmp_path):
+    (tmp_path / "4242").mkdir()
+    (tmp_path / "Fake Course").mkdir()
+
+    assert course_dir(tmp_path, "4242", "Fake Course") == tmp_path / "Fake Course"
+    assert (tmp_path / "4242").is_dir()
 
 
 # ── filenames ─────────────────────────────────────────────────────────────────

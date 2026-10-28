@@ -35,6 +35,7 @@ PASSWORD = "correct horse"
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 ORG_UNIT = "4242"
 COURSE = "/content/enforced/4242-INFOMAI"
+COURSE_NAME = "2026-2027 1-GS Fake Course (INFOMAI)"  # as Brightspace names course offerings
 PDF = b"%PDF-1.4\n% fake course file\n"
 QUICKLINK = "/d2l/common/dialogs/quickLink/quickLink.d2l"
 
@@ -99,11 +100,14 @@ HOME = """<h1>My Home</h1>
 READING = """<h1>Reading</h1>
 <p>See the <a href="handout.pdf">handout</a> and <a href="https://example.org/x.pdf">an outside link</a>.</p>"""
 
+ENROLLMENT = {"OrgUnit": {"Id": 4242, "Code": "INFOMAI", "Name": COURSE_NAME, "Type": {"Id": 3}}}
+
 API = {
     "/d2l/api/lp/1.43/enrollments/myenrollments/": {"Items": [
-        {"OrgUnit": {"Id": 4242, "Code": "INFOMAI", "Name": "Fake Course", "Type": {"Id": 3}}},
+        ENROLLMENT,
         {"OrgUnit": {"Id": 99, "Code": "GRP-1", "Name": "Project group", "Type": {"Id": 4}}},
     ]},
+    f"/d2l/api/lp/1.43/enrollments/myenrollments/{ORG_UNIT}": ENROLLMENT,
     f"/d2l/api/le/1.57/{ORG_UNIT}/content/toc": {"Modules": [{
         "ModuleId": 1, "Title": "Week 1", "Description": {"Text": "", "Html": ""}, "Modules": [],
         "Topics": [

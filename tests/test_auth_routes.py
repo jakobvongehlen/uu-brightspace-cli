@@ -10,7 +10,7 @@ from argparse import Namespace
 import pyotp
 import pytest
 
-from fake_uu import ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
+from fake_uu import COURSE_NAME, ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
 from uu_cli import auth, paths
 from uu_cli.auth import PromptCode, TotpSecret, credentials
 from uu_cli.services.brightspace import api
@@ -120,7 +120,7 @@ def test_one_code_then_sync_without_logging_in(fake_uu, at_terminal, monkeypatch
 
     assert code == 0, err
     assert "Reusing authenticated browser session." in err
-    assert (state / "mirror" / ORG_UNIT / "Week 1" / "Slides.pdf").read_bytes() == PDF
+    assert (state / "mirror" / COURSE_NAME / "Week 1" / "Slides.pdf").read_bytes() == PDF
     assert fake_uu.logins == 1 and len(fake_uu.codes) == 1
 
 

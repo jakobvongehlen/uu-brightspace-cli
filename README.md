@@ -167,7 +167,12 @@ uu brightspace assignments | grades | news | toc | schedule
 
 All commands except `login`, `courses` and `sync-all` need a course's org-unit id:
 pass `--org-unit <id>` (find ids with `courses`) or set `BRIGHTSPACE_ORG_UNIT`.
-Output goes to `<out>/<org-unit>/`. Run with `--help` for all options.
+Run with `--help` for all options.
+
+`sync` and `sync-all` put each course in `<out>/<course name>/`, named as Brightspace names
+the course, with `/` as `_`: `2026-2027 1-GS Data intensive systems (INFOMDIS)/`. A folder
+from earlier versions, `<out>/<org-unit>/`, is renamed to that, unless the named one is
+already there. When the name can't be looked up, the course goes to `<out>/<org-unit>/`.
 
 ### Konjoin
 

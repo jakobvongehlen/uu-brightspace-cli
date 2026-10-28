@@ -35,6 +35,29 @@ def description_files(html: str) -> list[tuple[str, str]]:
     return files
 
 
+def course_dir(base_dir: Path, ou: str, name: Optional[str]) -> Path:
+    """<base>/<course name> ('/' as '_'), or <base>/<ou> without a name.
+
+    A folder from before sync named them (<base>/<ou>) is renamed to the course's name.
+    """
+    folder = safe_filename(name).replace("/", "_") if name else ""
+    if folder in ("", ".", ".."):
+        return base_dir / ou
+    named, legacy = base_dir / folder, base_dir / ou
+    if legacy.is_dir() and not named.exists():
+        legacy.rename(named)
+        print(f"[SYNC] Renamed {legacy.name}/ to {named.name}/", file=sys.stderr)
+    return named
+
+
+def course_name(ctx: BrowserContext, token: str, ou: str) -> Optional[str]:
+    """The course's name in Brightspace (OrgUnit.Name of your enrollment), or None."""
+    data = api_fetch(ctx, f"{BASE_URL}/d2l/api/lp/1.43/enrollments/myenrollments/{ou}", token)
+    org = data.get("OrgUnit") if isinstance(data, dict) else None
+    name = org.get("Name") if isinstance(org, dict) else None
+    return name if isinstance(name, str) and name.strip() else None
+
+
 def cmd_sync(ctx: BrowserContext, args) -> int:
     """Download ALL course content files to a local directory."""
     status, _, _ = _sync_course(ctx, args, args.org_unit, args.output)
@@ -86,7 +109,8 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
         print(f"[SYNC-ALL] {org.get('Code') or ''} {org.get('Name') or ''} ({ou})",
               file=sys.stderr)
         try:
-            status, downloaded, skipped = _sync_course(ctx, args, ou, args.output)
+            status, downloaded, skipped = _sync_course(ctx, args, ou, args.output,
+                                                       name=org.get("Name"))
             result = (f"{downloaded} downloaded, {skipped} skipped"
                       if status == 0 else "error: sync failed (see log)")
             failed = failed or status != 0
@@ -105,8 +129,9 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
     return 1 if failed else 0
 
 
-def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> tuple[int, int, int]:
-    """Download ALL course content files to a local directory."""
+def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str],
+                 name: Optional[str] = None) -> tuple[int, int, int]:
+    """Download ALL course content files to <output>/<course name>/ (name looked up when not given)."""
     # Fill gaps only: a password typed at the prompt route must survive the next course.
     args.password = args.password or os.environ.get("BRIGHTSPACE_PASSWORD", "")
     args.totp     = args.totp     or os.environ.get("BRIGHTSPACE_TOTP_SECRET", "")
@@ -159,7 +184,7 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> t
 
     base_dir = Path(output or
                     str(paths.OUTPUT_DIR)).resolve()
-    out_dir = base_dir / ou
+    out_dir = course_dir(base_dir, ou, name or course_name(ctx, token, ou))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── helpers ────────────────────────────────────────────────────────────────

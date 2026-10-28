@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from fake_uu import ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
+from fake_uu import COURSE_NAME, ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
 from uu_cli import paths
 from uu_cli.auth.credentials import save_creds
 from uu_cli.services.brightspace import api
@@ -93,7 +93,7 @@ def test_sync_downloads_files_pages_and_linked_files(fake_uu, secret_env, state,
 
     code, _, err = run(["sync", "--org-unit", ORG_UNIT, "-o", str(out_dir)], capsys)
 
-    course = out_dir / ORG_UNIT
+    course = out_dir / COURSE_NAME
     assert code == 0, err
     assert (course / "Week 1" / "Slides.pdf").read_bytes() == PDF
     assert "handout" in (course / "Week 1" / "Reading.html").read_text()
@@ -106,6 +106,18 @@ def test_sync_downloads_files_pages_and_linked_files(fake_uu, secret_env, state,
     assert (course / "Lectures" / "_description.txt").read_text() == "Lecture 1 slides"
     # A fresh browser has lost the session cookies, so sync logs in by itself.
     assert fake_uu.logins == 1
+
+
+def test_sync_renames_a_folder_named_by_org_unit(fake_uu, secret_env, state, capsys):
+    out_dir = state / "mirror"
+    (out_dir / ORG_UNIT / "Week 1").mkdir(parents=True)
+    (out_dir / ORG_UNIT / "Week 1" / "Slides.pdf").write_bytes(b"kept")
+
+    code, _, err = run(["sync", "--org-unit", ORG_UNIT, "-o", str(out_dir)], capsys)
+
+    assert code == 0, err
+    assert not (out_dir / ORG_UNIT).exists()
+    assert (out_dir / COURSE_NAME / "Week 1" / "Slides.pdf").read_bytes() == b"kept"  # not fetched again
 
 
 def test_sync_all_dry_run_lists_only_course_offerings(fake_uu, capsys):
