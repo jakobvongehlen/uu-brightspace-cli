@@ -7,8 +7,9 @@
 Headless CLI for Utrecht University platforms, logged in with your Solis-id:
 
 - **[Brightspace](https://uu.brightspace.com)** (`uu brightspace`): mirrors your courses to
-  a local folder (slides, PDFs, assignment instructions, linked files and schedules) and
-  lists courses, assignments, deadlines, grades and announcements.
+  a local folder (slides, PDFs, assignment instructions, linked files, schedules and
+  discussion forums) and lists courses, assignments, deadlines, grades, announcements and
+  forum threads.
 - **[Konjoin](https://uu.konjoin.nl)** (`uu konjoin`): lists and searches research,
   thesis and internship projects, shows a project's details and exports them all to JSON.
 - **Library** (`uu library`): journal articles. Opens an article through UU's library in a browser
@@ -27,7 +28,9 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
 
 ## Features
 
-- **Full material download** of every module and topic, including files linked from inside pages.
+- **Full material download** of every module and topic, including files linked from inside pages
+  and from module descriptions.
+- **Discussion forums** as readable threads, on screen or saved with the course.
 - **All courses at once** with `sync-all` (skips group/team sections).
 - **Deadlines** from Brightspace dropboxes merged with linked Google Sheets schedules.
 - **Incremental**: files already on disk are skipped.
@@ -162,6 +165,7 @@ uu brightspace sync --org-unit <id> -o out    # Download one course
 uu brightspace sync-all -o out                # Download every course
 uu brightspace sync-all --dry-run             # Preview without downloading
 uu brightspace deadlines                      # Upcoming deadlines
+uu brightspace discussions                    # The forums, thread by thread
 uu brightspace assignments | grades | news | toc | schedule
 ```
 
@@ -173,6 +177,14 @@ Run with `--help` for all options.
 the course, with `/` as `_`: `2026-2027 1-GS Data intensive systems (INFOMDIS)/`. A folder
 from earlier versions, `<out>/<org-unit>/`, is renamed to that, unless the named one is
 already there. When the name can't be looked up, the course goes to `<out>/<org-unit>/`.
+
+`discussions` prints each forum and topic of the course as Markdown: threads oldest first,
+each reply nested as a quote under the post it answers. Brightspace copies the post a reply
+answers into the reply; that copy is left out, unless someone answered inside it. Attachments
+are only counted, not downloaded. `sync` saves the same in the course folder, a file per topic
+in `_discussions/<forum>/<topic>.md`, and everything the API returned in
+`_discussions/discussions.json`. These are rewritten on every sync, since threads grow. If
+the forums can't be fetched, sync says so and goes on.
 
 ### Konjoin
 
@@ -401,7 +413,8 @@ src/uu_cli/
   auth/                login routes for the code step (totp_secret.py, prompt.py) and
                        the encrypted credentials file
   services/
-    brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py, cli.py
+    brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py,
+                       discussions.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
     filesender/        api.py (the REST API with the login session, encryption),
                        commands.py (the upload page's session tokens), cli.py

@@ -135,6 +135,23 @@ API = {
         "Title": "Room change", "IsPublished": True, "CreatedDate": "2026-10-15T09:00:00.000Z",
         "Body": {"Text": "Lecture moves to Ruppert 040.", "Html": ""}, "Attachments": [],
     }],
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/": [
+        {"ForumId": 5, "Name": "Course questions", "Description": {"Text": "", "Html": "<p>Ask here.</p>"}},
+    ],
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/5/topics/": [
+        {"ForumId": 5, "TopicId": 50, "Name": "Exam", "Description": {"Text": "", "Html": ""}},
+    ],
+    # As the real route returns them: newest first, the text only in Html, a reply copying its parent.
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/5/topics/50/posts/": [
+        {"PostId": 502, "ParentPostId": 501, "PostingUserDisplayName": "Dr. Teacher",
+         "DatePosted": "2026-10-02T09:00:00.000Z", "Subject": "Re: Cheatsheet",
+         "Message": {"Text": "", "Html": "<p>No, sorry.</p><p>&lt;&lt;&lt; Replied to post below &gt;&gt;&gt;"
+                                         "<br>Authored by: A. Student<br>Authored on: 1 October 2026 10:00"
+                                         "<br>Subject: Cheatsheet<br><br></p><p>May we bring a cheatsheet?</p>"}},
+        {"PostId": 501, "ParentPostId": None, "PostingUserDisplayName": "A. Student",
+         "DatePosted": "2026-10-01T08:00:00.000Z", "Subject": "Cheatsheet",
+         "Message": {"Text": "", "Html": "<p>May we bring a cheatsheet?</p>"}},
+    ],
     f"/d2l/api/le/1.57/{ORG_UNIT}/grades/values/myGradeValues/": [
         {"DisplayName": "Essay 1", "WeightedNumerator": 7.5, "WeightedDenominator": 10},
     ],

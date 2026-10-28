@@ -19,6 +19,7 @@ from uu_cli.paths import safe_filename
 from uu_cli.services.brightspace.api import (
     BASE_URL, api_fetch, extract_token, get_token, load_token, save_token, token_expired,
 )
+from uu_cli.services.brightspace.discussions import save_discussions
 from uu_cli.services.brightspace.sheets import download_google_sheet, extract_google_sheets_urls
 
 
@@ -513,6 +514,14 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str],
             continue
         base = base_urls.get(f"{html_path.parent.name}/{html_path.stem}", "")
         _resolve_and_download(html_path, base, depth=0)
+
+    # ── 6. Discussions ─────────────────────────────────────────────────────────
+    print("[SYNC] Fetching discussions...", file=sys.stderr)
+    try:
+        n_posts = save_discussions(ctx, token, ou, out_dir)
+        print(f"[SYNC] Discussions: {n_posts} posts", file=sys.stderr)
+    except (Exception, SystemExit) as e:  # api_fetch exits on a 401; the files are already synced
+        print(f"[SYNC] Discussions failed, skipped: {e}", file=sys.stderr)
 
     print(f"[SYNC] Linked files: {files_found} found, "
           f"{files_downloaded} new downloads", file=sys.stderr)

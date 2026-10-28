@@ -11,7 +11,7 @@ import pytest
 from fake_uu import COURSE_NAME, ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
 from uu_cli import paths
 from uu_cli.auth.credentials import save_creds
-from uu_cli.services.brightspace import api
+from uu_cli.services.brightspace import api, sync
 from uu_cli.services.brightspace.cli import main
 
 pytestmark = pytest.mark.browser
@@ -77,6 +77,8 @@ def test_expired_token_asks_to_log_in_again(fake_uu, capsys):
     ("deadlines", ["2026-10-01", "Essay 1 (opens)", "2026-11-01"]),
     ("news", ["Room change", "Ruppert 040"]),
     ("grades", ["Essay 1", "7.5/10"]),
+    ("discussions", ["# Course questions", "## Exam", "### Cheatsheet",
+                     "May we bring a cheatsheet?", "> **Dr. Teacher**", "> No, sorry."]),
 ])
 def test_course_commands(fake_uu, capsys, command, expected):
     api.save_token(fake_uu.token)
@@ -104,8 +106,25 @@ def test_sync_downloads_files_pages_and_linked_files(fake_uu, secret_env, state,
     assert (course / "_linked_files" / "Reading" / "handout.pdf").read_bytes() == PDF
     assert (course / "Lectures" / "Lecture 1.pdf").read_bytes() == PDF
     assert (course / "Lectures" / "_description.txt").read_text() == "Lecture 1 slides"
+    exam = (course / "_discussions" / "Course questions" / "Exam.md").read_text()
+    assert "May we bring a cheatsheet?\n\n> **Dr. Teacher**" in exam
+    assert exam.count("May we bring a cheatsheet?") == 1  # the reply's copy of it is left out
+    forums = json.loads((course / "_discussions" / "discussions.json").read_text())
+    assert [len(t["Posts"]) for t in forums[0]["Topics"]] == [2]
     # A fresh browser has lost the session cookies, so sync logs in by itself.
     assert fake_uu.logins == 1
+
+
+def test_sync_goes_on_when_discussions_fail(fake_uu, secret_env, state, capsys, monkeypatch):
+    def broken(*args):
+        raise RuntimeError("forum route changed")
+    monkeypatch.setattr(sync, "save_discussions", broken)
+
+    code, _, err = run(["sync", "--org-unit", ORG_UNIT, "-o", str(state / "mirror")], capsys)
+
+    assert code == 0, err
+    assert "Discussions failed, skipped: forum route changed" in err
+    assert (state / "mirror" / COURSE_NAME / "Week 1" / "Slides.pdf").read_bytes() == PDF
 
 
 def test_sync_renames_a_folder_named_by_org_unit(fake_uu, secret_env, state, capsys):
