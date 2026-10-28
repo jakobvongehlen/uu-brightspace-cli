@@ -18,6 +18,7 @@ from uu_cli.services.brightspace.commands import (
     cmd_assignments, cmd_courses, cmd_deadlines, cmd_grades, cmd_login, cmd_news,
     cmd_schedule, cmd_toc,
 )
+from uu_cli.services.brightspace.discussions import cmd_discussions
 from uu_cli.services.brightspace.sync import cmd_sync, cmd_sync_all
 
 
@@ -51,6 +52,8 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     grd.add_argument("--org-unit", default=os.environ.get("BRIGHTSPACE_ORG_UNIT"))
     nws = cmd("news",         help="Show announcements")
     nws.add_argument("--org-unit", default=os.environ.get("BRIGHTSPACE_ORG_UNIT"))
+    dsc = cmd("discussions",  help="Show the discussion forums, thread by thread")
+    dsc.add_argument("--org-unit", default=os.environ.get("BRIGHTSPACE_ORG_UNIT"))
     sch = cmd("schedule",     help="Download Google Sheets from course content")
     sch.add_argument("-o", "--output",   default=None)
     sch.add_argument("--org-unit", default=os.environ.get("BRIGHTSPACE_ORG_UNIT"))
@@ -139,6 +142,7 @@ def _run(ctx, args) -> None:
         "assignments": cmd_assignments,
         "grades":      cmd_grades,
         "news":        cmd_news,
+        "discussions": cmd_discussions,
         "schedule":    cmd_schedule,
         "deadlines":   cmd_deadlines,
         "sync":        cmd_sync,

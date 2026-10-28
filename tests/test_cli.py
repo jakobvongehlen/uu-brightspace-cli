@@ -11,7 +11,7 @@ import pytest
 
 REPO = Path(__file__).parents[1]
 BRIGHTSPACE_COMMANDS = ["save-creds", "login", "courses", "toc", "assignments", "grades",
-                        "news", "schedule", "deadlines", "sync", "sync-all"]
+                        "news", "discussions", "schedule", "deadlines", "sync", "sync-all"]
 
 
 def cli(*args: str, state: Path) -> subprocess.CompletedProcess:

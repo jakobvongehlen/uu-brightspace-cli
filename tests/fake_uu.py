@@ -17,7 +17,7 @@ import base64
 import json
 import re
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import pyotp
 
@@ -35,7 +35,9 @@ PASSWORD = "correct horse"
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 ORG_UNIT = "4242"
 COURSE = "/content/enforced/4242-INFOMAI"
+COURSE_NAME = "2026-2027 1-GS Fake Course (INFOMAI)"  # as Brightspace names course offerings
 PDF = b"%PDF-1.4\n% fake course file\n"
+QUICKLINK = "/d2l/common/dialogs/quickLink/quickLink.d2l"
 
 # Where UU's login sends you back to, per service (the "sp" parameter).
 ACS = {
@@ -98,11 +100,14 @@ HOME = """<h1>My Home</h1>
 READING = """<h1>Reading</h1>
 <p>See the <a href="handout.pdf">handout</a> and <a href="https://example.org/x.pdf">an outside link</a>.</p>"""
 
+ENROLLMENT = {"OrgUnit": {"Id": 4242, "Code": "INFOMAI", "Name": COURSE_NAME, "Type": {"Id": 3}}}
+
 API = {
     "/d2l/api/lp/1.43/enrollments/myenrollments/": {"Items": [
-        {"OrgUnit": {"Id": 4242, "Code": "INFOMAI", "Name": "Fake Course", "Type": {"Id": 3}}},
+        ENROLLMENT,
         {"OrgUnit": {"Id": 99, "Code": "GRP-1", "Name": "Project group", "Type": {"Id": 4}}},
     ]},
+    f"/d2l/api/lp/1.43/enrollments/myenrollments/{ORG_UNIT}": ENROLLMENT,
     f"/d2l/api/le/1.57/{ORG_UNIT}/content/toc": {"Modules": [{
         "ModuleId": 1, "Title": "Week 1", "Description": {"Text": "", "Html": ""}, "Modules": [],
         "Topics": [
@@ -112,6 +117,12 @@ API = {
             {"TopicId": 14, "Title": "Welcome", "TypeIdentifier": "Link",
              "Url": f"/d2l/le/content/{ORG_UNIT}/viewContent/14/View"},
         ],
+    }, {
+        # Slides as quickLinks in the description and no topics, as some courses keep them.
+        "ModuleId": 2, "Title": "Lectures", "Modules": [], "Topics": [],
+        "Description": {"Text": "Lecture 1 slides", "Html": (
+            f'<p><a href="{BRIGHTSPACE}{QUICKLINK}?ou={ORG_UNIT}&amp;type=coursefile'
+            f'&amp;fileId=Lecture+1.pdf">Lecture 1 slides</a></p>')},
     }]},
     f"/d2l/api/le/1.57/{ORG_UNIT}/content/1/topics/14/": {"Body": "<p>Welcome to the course.</p>"},
     f"/d2l/api/le/1.57/{ORG_UNIT}/dropbox/folders/": [{
@@ -124,6 +135,23 @@ API = {
         "Title": "Room change", "IsPublished": True, "CreatedDate": "2026-10-15T09:00:00.000Z",
         "Body": {"Text": "Lecture moves to Ruppert 040.", "Html": ""}, "Attachments": [],
     }],
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/": [
+        {"ForumId": 5, "Name": "Course questions", "Description": {"Text": "", "Html": "<p>Ask here.</p>"}},
+    ],
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/5/topics/": [
+        {"ForumId": 5, "TopicId": 50, "Name": "Exam", "Description": {"Text": "", "Html": ""}},
+    ],
+    # As the real route returns them: newest first, the text only in Html, a reply copying its parent.
+    f"/d2l/api/le/1.57/{ORG_UNIT}/discussions/forums/5/topics/50/posts/": [
+        {"PostId": 502, "ParentPostId": 501, "PostingUserDisplayName": "Dr. Teacher",
+         "DatePosted": "2026-10-02T09:00:00.000Z", "Subject": "Re: Cheatsheet",
+         "Message": {"Text": "", "Html": "<p>No, sorry.</p><p>&lt;&lt;&lt; Replied to post below &gt;&gt;&gt;"
+                                         "<br>Authored by: A. Student<br>Authored on: 1 October 2026 10:00"
+                                         "<br>Subject: Cheatsheet<br><br></p><p>May we bring a cheatsheet?</p>"}},
+        {"PostId": 501, "ParentPostId": None, "PostingUserDisplayName": "A. Student",
+         "DatePosted": "2026-10-01T08:00:00.000Z", "Subject": "Cheatsheet",
+         "Message": {"Text": "", "Html": "<p>May we bring a cheatsheet?</p>"}},
+    ],
     f"/d2l/api/le/1.57/{ORG_UNIT}/grades/values/myGradeValues/": [
         {"DisplayName": "Essay 1", "WeightedNumerator": 7.5, "WeightedDenominator": 10},
     ],
@@ -378,6 +406,9 @@ class FakeUU:
                 "Content-Type": "application/pdf",
                 "Content-Disposition": f'attachment; filename="{name}"',
             })
+        if path == QUICKLINK:  # a course file by name, as a link in a description gives it
+            file_id = parse_qs(url.query).get("fileId", [""])[0]
+            return _redirect(route, f"{BRIGHTSPACE}{COURSE}/{quote(file_id)}")
         if path == f"{COURSE}/reading.html":
             return _html(route, READING)
         route.fulfill(status=404, body="not found")

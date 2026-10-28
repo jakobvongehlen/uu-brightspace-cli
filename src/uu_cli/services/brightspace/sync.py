@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from playwright.sync_api import BrowserContext, Page
 
@@ -18,7 +19,44 @@ from uu_cli.paths import safe_filename
 from uu_cli.services.brightspace.api import (
     BASE_URL, api_fetch, extract_token, get_token, load_token, save_token, token_expired,
 )
+from uu_cli.services.brightspace.discussions import save_discussions
 from uu_cli.services.brightspace.sheets import download_google_sheet, extract_google_sheets_urls
+
+
+def description_files(html: str) -> list[tuple[str, str]]:
+    """(URL, filename) of each course file a description links to with a quickLink."""
+    files = []
+    for href in re.findall(r'href="([^"]*quickLink\.d2l[^"]*)"', html):
+        url = urljoin(BASE_URL + "/", html_lib.unescape(href))
+        query = parse_qs(urlparse(url).query)
+        file_id = (query.get("fileId") or [""])[0]
+        if query.get("type") != ["coursefile"] or not Path(file_id).name:
+            continue
+        files.append((url, safe_filename(Path(file_id).name)))
+    return files
+
+
+def course_dir(base_dir: Path, ou: str, name: Optional[str]) -> Path:
+    """<base>/<course name> ('/' as '_'), or <base>/<ou> without a name.
+
+    A folder from before sync named them (<base>/<ou>) is renamed to the course's name.
+    """
+    folder = safe_filename(name).replace("/", "_") if name else ""
+    if folder in ("", ".", ".."):
+        return base_dir / ou
+    named, legacy = base_dir / folder, base_dir / ou
+    if legacy.is_dir() and not named.exists():
+        legacy.rename(named)
+        print(f"[SYNC] Renamed {legacy.name}/ to {named.name}/", file=sys.stderr)
+    return named
+
+
+def course_name(ctx: BrowserContext, token: str, ou: str) -> Optional[str]:
+    """The course's name in Brightspace (OrgUnit.Name of your enrollment), or None."""
+    data = api_fetch(ctx, f"{BASE_URL}/d2l/api/lp/1.43/enrollments/myenrollments/{ou}", token)
+    org = data.get("OrgUnit") if isinstance(data, dict) else None
+    name = org.get("Name") if isinstance(org, dict) else None
+    return name if isinstance(name, str) and name.strip() else None
 
 
 def cmd_sync(ctx: BrowserContext, args) -> int:
@@ -72,7 +110,8 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
         print(f"[SYNC-ALL] {org.get('Code') or ''} {org.get('Name') or ''} ({ou})",
               file=sys.stderr)
         try:
-            status, downloaded, skipped = _sync_course(ctx, args, ou, args.output)
+            status, downloaded, skipped = _sync_course(ctx, args, ou, args.output,
+                                                       name=org.get("Name"))
             result = (f"{downloaded} downloaded, {skipped} skipped"
                       if status == 0 else "error: sync failed (see log)")
             failed = failed or status != 0
@@ -91,8 +130,9 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
     return 1 if failed else 0
 
 
-def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> tuple[int, int, int]:
-    """Download ALL course content files to a local directory."""
+def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str],
+                 name: Optional[str] = None) -> tuple[int, int, int]:
+    """Download ALL course content files to <output>/<course name>/ (name looked up when not given)."""
     # Fill gaps only: a password typed at the prompt route must survive the next course.
     args.password = args.password or os.environ.get("BRIGHTSPACE_PASSWORD", "")
     args.totp     = args.totp     or os.environ.get("BRIGHTSPACE_TOTP_SECRET", "")
@@ -145,7 +185,7 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> t
 
     base_dir = Path(output or
                     str(paths.OUTPUT_DIR)).resolve()
-    out_dir = base_dir / ou
+    out_dir = course_dir(base_dir, ou, name or course_name(ctx, token, ou))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── helpers ────────────────────────────────────────────────────────────────
@@ -331,6 +371,15 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> t
             mod_dir = out_dir / mp.replace("/", "_")
             mod_dir.mkdir(parents=True, exist_ok=True)
 
+            # Some courses keep their slides as quickLinks in the module description, not as topics.
+            desc = mod.get("Description")
+            if isinstance(desc, dict) and desc.get("Html"):
+                if desc.get("Text", "").strip():
+                    (mod_dir / "_description.txt").write_text(desc["Text"])
+                for url, name in description_files(desc["Html"]):
+                    dest = mod_dir / name
+                    _download(url, dest, label=dest.name)
+
             for topic in mod.get("Topics", []):
                 if not isinstance(topic, dict):
                     continue
@@ -465,6 +514,14 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> t
             continue
         base = base_urls.get(f"{html_path.parent.name}/{html_path.stem}", "")
         _resolve_and_download(html_path, base, depth=0)
+
+    # ── 6. Discussions ─────────────────────────────────────────────────────────
+    print("[SYNC] Fetching discussions...", file=sys.stderr)
+    try:
+        n_posts = save_discussions(ctx, token, ou, out_dir)
+        print(f"[SYNC] Discussions: {n_posts} posts", file=sys.stderr)
+    except (Exception, SystemExit) as e:  # api_fetch exits on a 401; the files are already synced
+        print(f"[SYNC] Discussions failed, skipped: {e}", file=sys.stderr)
 
     print(f"[SYNC] Linked files: {files_found} found, "
           f"{files_downloaded} new downloads", file=sys.stderr)
