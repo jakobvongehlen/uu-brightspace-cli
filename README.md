@@ -22,6 +22,8 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   Makes a short link, with an optional label, and lists yours.
 - **[SURFfilesender](https://filesender.surf.nl)** (`uu filesender`): sends large files to named
   people for a short while, optionally encrypted, and lists your transfers.
+- **[Bookings](https://bookings.uu.nl)** (`uu bookings`): the University Library's study spaces
+  and group rooms. Finds free spaces for a date and time, and books one.
 - **[Osiris course catalogue](https://osiris-student.uu.nl/onderwijscatalogus/extern/cursus)**
   (`uu osiris`): searches UU's courses by code, name, faculty, level, period, timeslot or
   lecturer, and shows a course's page. No login needed.
@@ -48,7 +50,7 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   hasn't been tried yet.
 - **UU only.** The login flow is written for UU's Solis-id login page.
 - **Can break** if UU, D2L, SURFconext, Konjoin, UU's library proxy, GitLab, edu.nl,
-  SURFfilesender or Osiris change their pages.
+  SURFfilesender, bookings.uu.nl or Osiris change their pages.
 
 ## Install
 
@@ -365,6 +367,39 @@ What SURF's [code of conduct](https://servicedesk.surf.nl/wiki/spaces/WIKI/pages
 SURF has no separate policy for the API (its `api_secret_aup_enabled` is off). Optional:
 `UU_FILESENDER_URL` for another FileSender.
 
+### Bookings
+
+```sh
+uu bookings places                                         # The booking pages
+uu bookings options UBUSPseats                             # Its categories, types and floors
+uu bookings search UBUSPseats --date 2026-10-25 --from 10:00 --until 12:00 --zone 6th --power
+uu bookings search groupubb --from 13:00 --until 15:00     # Group rooms, today
+uu bookings book UBUSPseats 97740 --date 2026-10-25 --from 10:00 --until 12:00 --accept-terms
+uu bookings list                                           # Upcoming ones you booked here
+uu bookings show 'https://bookings.uu.nl/equipment/cancel?id=…'   # The email's cancel link
+uu bookings cancel 'https://bookings.uu.nl/equipment/cancel?id=…'
+```
+
+[bookings.uu.nl](https://bookings.uu.nl) is the University Library's booking site (Springshare
+LibCal): study spaces and group rooms in the City Centre and at Utrecht Science Park, at most
+two days ahead, and meeting rooms for staff. Its login goes through SURFconext and UU's
+Solis-id page, but asks UU for a code every time (MFA), even while UU's session from another
+service lasts; the session it gets is then kept like the others.
+
+`search` lists the free spaces with an id, as the search on the site does; a space that is
+free only at another time says so. `--zone`, `--category` and `--type` take a number or part
+of a name from `options`, and `--accessible`, `--power` and `--pc` narrow it down. `book` takes
+the id or the name: it holds the space through its "Book Now" button and submits the booking
+form with your name and email from your login. Booking means agreeing to the page's terms
+(the library's opening hours and house rules), so `book` only goes ahead with
+`--accept-terms`. When the site refuses, the held space is given back.
+
+bookings.uu.nl has no page that lists your bookings: each confirmation email has a cancel link
+with a code that only that email carries. So `book` keeps its own list in `bookings.json` next
+to the token, which `list` shows, and `show` and `cancel` take the email's cancel link (or its
+code). `show` lists what is still booked on it, `cancel` cancels all of it, or one booking with
+`--booking <id>` from `show`. Optional: `UU_BOOKINGS_URL`.
+
 ### Osiris course catalogue
 
 ```bash
@@ -416,6 +451,7 @@ src/uu_cli/
     brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py,
                        discussions.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
+    bookings/          api.py (LibCal's search and booking pages), commands.py, cli.py
     filesender/        api.py (the REST API with the login session, encryption),
                        commands.py (the upload page's session tokens), cli.py
     gitlab/            api.py (/api/v4 from a GitLab page, with its CSRF token),

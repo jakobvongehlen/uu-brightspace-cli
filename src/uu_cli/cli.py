@@ -10,6 +10,7 @@ from uu_cli import __version__
 
 # Service name -> module whose main(argv, prog) runs that service's commands.
 SERVICES = {
+    "bookings": "uu_cli.services.bookings.cli",
     "brightspace": "uu_cli.services.brightspace.cli",
     "edunl": "uu_cli.services.edunl.cli",
     "filesender": "uu_cli.services.filesender.cli",

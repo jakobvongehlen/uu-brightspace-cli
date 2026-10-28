@@ -28,6 +28,7 @@ LIBRARY = "https://utrechtuniversity.idm.oclc.org"
 GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
+BOOKINGS = "https://bookings.uu.nl"
 IDP = "https://login.uu.nl"
 MFA = "https://mfa.uu.nl"  # where UU asks the one-time code
 SOLISID = "1234567"
@@ -46,10 +47,11 @@ ACS = {
     "library": f"{LIBRARY}/Shibboleth.sso/SAML2/POST",
     "edunl": f"{EDUNL}/mellon/postResponse",
     "filesender": f"{FILESENDER}/simplesaml/module.php/saml/sp/saml2-acs.php/default-sp",
+    "bookings": f"{BOOKINGS}/spaces/auth/acs",
 }
 
 # The services that reach UU's login through SURFconext's institution picker.
-VIA_SURFCONEXT = ("konjoin", "edunl", "filesender")
+VIA_SURFCONEXT = ("konjoin", "edunl", "filesender", "bookings")
 
 # Lets the CLI's fetch() from about:blank reach the API, as a cached-token command does.
 CORS = {
@@ -92,6 +94,58 @@ FILESENDER_TERMS = """<div class="fs-base-page serviceaup" data-service-aup-vers
 </div>
 <script>document.querySelector('.service_aup_accept a').onclick = e => {
   e.preventDefault(); location.href = '/?aup=accept'; };</script>"""
+
+# bookings.uu.nl's pages, as LibCal lays them out (24-10-2026), cut down to what the CLI reads.
+BOOKING_SEARCH = """<ol class="breadcrumb"><li class="s-lc-libauth-logout"><a href="/spaces/logout">
+  Jakob - Logout</a></li></ol>
+<form id="s-lc-search-filters" method="get" action="?">
+  <input type="hidden" name="lid" value="2212">
+  <select id="s-lc-group" name="gid"><option value="0">Show All</option>
+    <option value="4377">group space</option><option value="4378" selected>single study space</option></select>
+  <select id="s-lc-type" name="capacity"><option value="0" selected>select a space</option>
+    <option value="-1">single space</option><option value="1">groupspace (max. 4p)</option></select>
+  <select id="s-lc-zone" name="zone"><option value="0">Show All</option>
+    <option value="1881">3rd floor</option><option value="1884">6th floor</option></select>
+  <input name="date" value="2026-10-24"><input name="start" value="14:00"><input name="end" value="15:00">
+</form><!-- {page} -->"""
+
+BOOKING_RESULT = """<div class="media s-lc-booking-suggestion">
+  <h3 class="media-heading s-lc-suggestion-heading"><a href="/seat/{seat}">{name}</a></h3>
+  <div class="s-lc-booking-group">single study space | {zone}</div>
+  <form method="post" action="/space/booking/form">
+    <input type="hidden" name="eid" value="{eid}"><input type="hidden" name="seat_id" value="{seat}">
+    <input type="hidden" name="start" value="{day} {start}:00"><input type="hidden" name="end" value="{day} {end}:00">
+    <button type="submit">Book Now</button>
+  </form></div>"""
+
+BOOKING_FORM = """<div id="s-lc-public-page-content"><h1>Booking Details</h1>
+<button class="s-lc-eq-remove-single" data-eid="{eid}">Remove</button>
+<form id="s-lc-eq-bform" method="post" action="/ajax/equipment/checkout">
+  <input type="hidden" id="session" name="session" value="50545853">
+  <input type="checkbox" id="terms" name="terms" value="1"> I agree to the Terms &amp; Conditions.
+  <button id="btn-form-submit" type="submit" disabled>Submit my Booking</button>
+</form><div id="submit-errors" class="alert alert-danger" style="display:none"></div></div>
+<script>
+  var springyPage = {{sessionId: 50545853}};
+  document.getElementById('terms').onchange = e => {{
+    document.getElementById('btn-form-submit').disabled = !e.target.checked; }};
+  document.getElementById('s-lc-eq-bform').onsubmit = async e => {{
+    e.preventDefault();
+    const r = await fetch('/ajax/equipment/checkout', {{method: 'POST',
+      body: new URLSearchParams(new FormData(e.target))}});
+    const text = await r.text();
+    if (!r.ok) {{ const err = document.getElementById('submit-errors');
+      err.textContent = text; err.style.display = 'block'; return; }}
+    document.getElementById('s-lc-public-page-content').innerHTML = text;
+  }};
+</script>"""
+
+CANCEL_ROW = """<tr id="booking_{id}"><td><img alt=""></td><td>{name}</td><td>single study space</td>
+  <td>{from}</td><td>{to}</td>
+  <td><button class="btn s-lc-cancel-single" data-id="{id}">Cancel Booking</button></td></tr>"""
+
+BOOKING_DONE = """<div class="s-lc-eq-booking-status-msg">Booking Confirmed</div>
+<p>You will receive an email confirmation at the address you gave.</p>"""
 
 HOME = """<h1>My Home</h1>
 <script>localStorage.setItem('D2L.Fetch.Tokens',
@@ -293,8 +347,23 @@ class FakeUU:
         self.edunl_links: list[dict] = []  # your links, newest first: code, url, label, clicks, date
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
+        self.bookings_logins = 0    # completed logins at bookings.uu.nl
+        self.bookings_searches: list[dict] = []  # the query of every search
+        self.bookings_free = [  # what a search finds: name, seat id (rooms have none), eid, zone
+            ("3rd floor 3.20 102", "97448", "14886", "3rd floor"),
+            ("6th floor 6.07 085", "97740", "14888", "6th floor"),
+        ]
+        self.bookings_held: list[dict] = []     # what "Book Now" held
+        self.bookings_made: list[dict] = []     # what the booking form's checkout received
+        self.bookings_released: list[dict] = []  # holds given back
+        self.bookings_checkout_fails = False    # the checkout answers with an error
+        self.bookings_confirmations = {         # the email's code -> bookings its cancel page lists
+            "6b27601a6048": [{"id": "45474228", "name": "4th floor 4.06 098",
+                              "from": "10:00 Sunday, October 25, 2026",
+                              "to": "11:00 Sunday, October 25, 2026"}]}
+        self.bookings_cancelled: list[str] = []  # booking ids cancelled
         self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
-        self.step_up: set[str] = set()  # services UU asks a code for even while you're logged in
+        self.step_up: set[str] = {"bookings"}  # services UU asks a code for even while you're logged in
         self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
         self.consent_needed: set[str] = set()  # services SURFconext still asks your consent for
         self.consents: list[str] = []  # services you gave consent for
@@ -318,6 +387,7 @@ class FakeUU:
             GITLAB: lambda *a: self._gitlab(*a, by_hand=by_hand),
             EDUNL: self._edunl,
             FILESENDER: self._filesender,
+            BOOKINGS: self._bookings,
         }.get(origin)
         if handler:
             handler(route, req, url)
@@ -621,6 +691,61 @@ class FakeUU:
                                     f"document.cookie = 'csrfptoken={FILESENDER_CSRF}; path=/';</script>")
             return _html(route, '<h1>Welkom bij SURFfilesender!</h1><a id="btn_logon" href="#">Aanmelden</a>')
         route.fulfill(status=404, body="not found")
+
+
+    # ── bookings.uu.nl (Springshare LibCal) ───────────────────────────────────
+    def _bookings(self, route, req, url) -> None:
+        path, query = url.path, parse_qs(url.query)
+        logged_in = "lc_session=" in _cookies(req)
+        if path == urlparse(ACS["bookings"]).path:
+            self.bookings_logins += 1
+            return _redirect(route, f"{BOOKINGS}/reserve/UBUSPseats", cookie="lc_session=s1; Path=/")
+        if not logged_in:  # through LibAuth to SURFconext, which picks UU
+            return _redirect(route, f"{SURFCONEXT}/authentication/idp/single-sign-on?sp=bookings")
+        if path == "/reserve/ash":
+            return _html(route, "<title>Whoops! - LibCal</title><h1>Whoops!</h1>")
+        if path.startswith("/reserve/"):
+            return self._bookings_search(route, path, query)
+        if path == "/space/booking/form" and req.method == "POST":
+            form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
+            self.bookings_held.append(form)
+            return _html(route, BOOKING_FORM.format(eid=form["eid"]))
+        if path == "/ajax/equipment/checkout" and req.method == "POST":
+            if self.bookings_checkout_fails:
+                return route.fulfill(status=400, body="That space is no longer available.")
+            self.bookings_made.append({"session": "50545853", "body": req.post_data})
+            return route.fulfill(status=200, body=BOOKING_DONE, headers={"Content-Type": "text/html"})
+        if path == "/equipment/cancel":
+            rows = self.bookings_confirmations.get(query.get("id", [""])[0])
+            if rows is None:
+                return _redirect(route, f"{BOOKINGS}/status?id=404")
+            return _html(route, "<h1>Cancel Booking</h1><table>" + "".join(
+                CANCEL_ROW.format(**r) for r in rows if r["id"] not in self.bookings_cancelled)
+                + "</table>")
+        if path.startswith("/ajax/equipment/cancel/") and req.method == "POST":
+            code, booking = path.split("/")[4:6]
+            if booking not in [r["id"] for r in self.bookings_confirmations.get(code, [])]:
+                return _json(route, {"success": False, "error": "Booking not found"})
+            self.bookings_cancelled.append(booking)
+            return _json(route, {"success": True, "moreRemaining": False})
+        if path == "/status":
+            return _html(route, "<title>404 - LibCal</title><h1>Oops!</h1>")
+        if path == "/ajax/equipment/cart/remove" and req.method == "POST":
+            self.bookings_released.append({k: v[0] for k, v in parse_qs(req.post_data or "").items()})
+            return _json(route, {"count": 0})
+        route.fulfill(status=404, body="not found")
+
+    def _bookings_search(self, route, path, query) -> None:
+        q = {k: v[0] for k, v in query.items()}
+        results = ""
+        if q.get("m") == "t":
+            self.bookings_searches.append(q)
+            day, start, end = q["date"], q["start"], q["end"]
+            found = [] if q.get("capacity") in (None, "0") else self.bookings_free  # it needs a type
+            results = '<div id="s-lc-eq-search-results"><h2>Showing best matches</h2>' + "".join(
+                BOOKING_RESULT.format(name=n, seat=sid, eid=eid, zone=z, day=day, start=start, end=end)
+                for n, sid, eid, z in found) + "</div>"
+        return _html(route, BOOKING_SEARCH.format(page=path.rsplit("/", 1)[1]) + results)
 
 
 def _by_hand(values: dict) -> str:
