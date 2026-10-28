@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from playwright.sync_api import BrowserContext, Page
 
@@ -19,6 +20,19 @@ from uu_cli.services.brightspace.api import (
     BASE_URL, api_fetch, extract_token, get_token, load_token, save_token, token_expired,
 )
 from uu_cli.services.brightspace.sheets import download_google_sheet, extract_google_sheets_urls
+
+
+def description_files(html: str) -> list[tuple[str, str]]:
+    """(URL, filename) of each course file a description links to with a quickLink."""
+    files = []
+    for href in re.findall(r'href="([^"]*quickLink\.d2l[^"]*)"', html):
+        url = urljoin(BASE_URL + "/", html_lib.unescape(href))
+        query = parse_qs(urlparse(url).query)
+        file_id = (query.get("fileId") or [""])[0]
+        if query.get("type") != ["coursefile"] or not Path(file_id).name:
+            continue
+        files.append((url, safe_filename(Path(file_id).name)))
+    return files
 
 
 def cmd_sync(ctx: BrowserContext, args) -> int:
@@ -330,6 +344,15 @@ def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str]) -> t
             mod_id = mod.get("ModuleId")
             mod_dir = out_dir / mp.replace("/", "_")
             mod_dir.mkdir(parents=True, exist_ok=True)
+
+            # Some courses keep their slides as quickLinks in the module description, not as topics.
+            desc = mod.get("Description")
+            if isinstance(desc, dict) and desc.get("Html"):
+                if desc.get("Text", "").strip():
+                    (mod_dir / "_description.txt").write_text(desc["Text"])
+                for url, name in description_files(desc["Html"]):
+                    dest = mod_dir / name
+                    _download(url, dest, label=dest.name)
 
             for topic in mod.get("Topics", []):
                 if not isinstance(topic, dict):

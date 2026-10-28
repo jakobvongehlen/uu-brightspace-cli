@@ -102,6 +102,8 @@ def test_sync_downloads_files_pages_and_linked_files(fake_uu, secret_env, state,
     assert json.loads((course / "_assignments" / "Essay 1.json").read_text())["due_date"].startswith("2026-11-01")
     assert (course / "_assignments" / "brief.pdf").read_bytes() == PDF
     assert (course / "_linked_files" / "Reading" / "handout.pdf").read_bytes() == PDF
+    assert (course / "Lectures" / "Lecture 1.pdf").read_bytes() == PDF
+    assert (course / "Lectures" / "_description.txt").read_text() == "Lecture 1 slides"
     # A fresh browser has lost the session cookies, so sync logs in by itself.
     assert fake_uu.logins == 1
 

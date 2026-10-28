@@ -13,6 +13,7 @@ from uu_cli import paths
 from uu_cli.auth import credentials
 from uu_cli.services.brightspace import api
 from uu_cli.services.brightspace.sheets import extract_google_sheets_urls, parse_sheet_deadlines
+from uu_cli.services.brightspace.sync import description_files
 
 
 # ── tokens ────────────────────────────────────────────────────────────────────
@@ -89,6 +90,23 @@ def test_parse_sheet_deadlines(tmp_path):
 
     assert [(d["date"], d["title"]) for d in parse_sheet_deadlines(sheet)] == [
         ("2026-04-21", "Intro"), ("2026-05-05", "Report 1")]
+
+
+# ── module descriptions ───────────────────────────────────────────────────────
+def test_description_files_takes_course_file_quicklinks():
+    html = ('<p><a href="https://uu.brightspace.com/d2l/common/dialogs/quickLink/quickLink.d2l'
+            '?ou=1&amp;type=coursefile&amp;fileId=01.+Introduction26.pdf">Slides</a>'
+            '<a href="/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&amp;type=coursefile'
+            '&amp;fileId=week2%2Fnotes.pdf">Notes</a>'
+            '<a href="/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&amp;type=quiz&amp;rcode=x">Quiz</a>'
+            '<a href="https://example.org/paper.pdf">Paper</a></p>')
+
+    assert description_files(html) == [
+        ("https://uu.brightspace.com/d2l/common/dialogs/quickLink/quickLink.d2l"
+         "?ou=1&type=coursefile&fileId=01.+Introduction26.pdf", "01. Introduction26.pdf"),
+        ("https://uu.brightspace.com/d2l/common/dialogs/quickLink/quickLink.d2l"
+         "?ou=1&type=coursefile&fileId=week2%2Fnotes.pdf", "notes.pdf"),
+    ]
 
 
 # ── filenames ─────────────────────────────────────────────────────────────────
