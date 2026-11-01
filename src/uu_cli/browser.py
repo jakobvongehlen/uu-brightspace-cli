@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
+import re
+import ssl
 import time
+import warnings
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import (
     BrowserContext, BrowserType, Error as PlaywrightError, Playwright, Route,
 )
@@ -43,15 +51,71 @@ _launched_by: dict[BrowserContext, BrowserType] = {}
 
 def launch(pw: Playwright, session_dir: str | Path) -> BrowserContext:
     """Open the persistent browser profile in session_dir, with the last run's session restored."""
+    proxy, trust = network()
     ctx = pw.chromium.launch_persistent_context(
         str(session_dir),
         headless=True,
         no_viewport=True,
-        args=CHROMIUM_ARGS,
+        args=CHROMIUM_ARGS + trust,
+        proxy=proxy,
     )
     _launched_by[ctx] = pw.chromium
     restore_session(ctx, session_dir)
     return ctx
+
+
+def network() -> tuple[dict | None, list[str]]:
+    """Chromium's proxy (from HTTPS_PROXY) and the flag that trusts the CAs SSL_CERT_FILE adds.
+
+    curl and Python follow both variables by themselves; Chromium follows neither. Behind a proxy
+    that terminates TLS (a company network, for one) every site comes re-signed by the proxy's
+    own CA, which only SSL_CERT_FILE names.
+    """
+    proxy = None
+    url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if url:
+        p = urlparse(url)
+        proxy = {"server": f"{p.scheme}://{p.hostname}" + (f":{p.port}" if p.port else "")}
+        if p.username:
+            proxy["username"] = unquote(p.username)
+            proxy["password"] = unquote(p.password or "")
+        if bypass := os.environ.get("NO_PROXY") or os.environ.get("no_proxy"):
+            proxy["bypass"] = bypass
+    added = _added_cas()
+    trust = [f"--ignore-certificate-errors-spki-list={','.join(sorted(added))}"] if added else []
+    return proxy, trust
+
+
+def _added_cas() -> set[str]:
+    """The SPKI hashes of the CAs in SSL_CERT_FILE that the system's bundle doesn't have.
+
+    Chromium skips every certificate check for a chain holding one of these keys, so only the
+    added CAs go in, never the public ones; when the system's bundle can't be read, none do.
+    """
+    added = os.environ.get("SSL_CERT_FILE")
+    system = ssl.get_default_verify_paths().openssl_cafile
+    if not added or not system:
+        return set()
+    try:
+        return _spki_hashes(Path(added)) - _spki_hashes(Path(system))
+    except OSError:
+        return set()
+
+
+def _spki_hashes(pem_file: Path) -> set[str]:
+    hashes = set()
+    for pem in re.findall(rb"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----",
+                          pem_file.read_bytes(), re.S):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # old roots with a negative serial number
+                key = x509.load_pem_x509_certificate(pem).public_key()
+        except ValueError:
+            continue
+        der = key.public_bytes(serialization.Encoding.DER,
+                               serialization.PublicFormat.SubjectPublicKeyInfo)
+        hashes.add(base64.b64encode(hashlib.sha256(der).digest()).decode())
+    return hashes
 
 
 def open_window(ctx: BrowserContext, headless: bool = False) -> BrowserContext:
@@ -61,7 +125,8 @@ def open_window(ctx: BrowserContext, headless: bool = False) -> BrowserContext:
     headless is for the tests.
     """
     browser_type = ctx.browser.browser_type if ctx.browser else _launched_by[ctx]
-    window = browser_type.launch(headless=headless, args=WINDOW_ARGS)
+    proxy, trust = network()
+    window = browser_type.launch(headless=headless, args=WINDOW_ARGS + trust, proxy=proxy)
     win = window.new_context(no_viewport=True)
     win.add_cookies(ctx.cookies())
     return win

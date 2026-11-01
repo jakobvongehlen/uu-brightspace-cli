@@ -99,7 +99,9 @@ uu brightspace login
 
 After a login the CLI keeps the session cookies in the session directory
 (`cookies.json`, owner-only), so later commands, including `sync`, reuse the login
-until UU or Brightspace ends the session. Only then does it ask for a code again.
+until UU or Brightspace ends the session. Only then does it ask for a code again. When UU
+has ended it, its login sends the old cookies to a "You're signed out" page instead of the
+form; the CLI then drops them and starts the login over.
 Those cookies work like a login for as long as the session lasts; delete the file to
 log out.
 
@@ -218,6 +220,8 @@ uu library get 10.1016/j.knosys.2025.113564          # The same window, which op
 uu library link 10.1016/j.knosys.2025.113564         # Only the link through UU's library, for your own browser
 uu library watch -o papers/                          # get, for each DOI you add to papers/wanted.txt
 uu library elsevier 10.1016/j.knosys.2025.113564     # Elsevier's API (needs ELSEVIER_API_KEY)
+uu library scopus 'TITLE-ABS-KEY(aspic*)' -o lit/    # Scopus through UU's library; your exports are saved
+uu library scopus --queries queries.txt -o lit/      # One window per query in the file
 ```
 
 `uu papers`, the old name, still works.
@@ -228,7 +232,11 @@ use) and opens that in a browser window with your UU session, so while UU's sess
 lasts there is no login. Find the PDF as you always would: the first PDF you open or
 download is saved, named after its DOI, and the window closes. When the PDF's address
 has a DOI of its own, that one names the file and the CLI says so: a chapter page can
-also offer the whole book. `--keep-open` keeps it
+also offer the whole book. A whole issue as a ZIP counts when one PDF in it carries the
+article's DOI: that PDF is taken out. That is the way in at ScienceDirect, whose "View PDF"
+goes through a Cloudflare bot check that turns the window away (403); "Download full issue"
+doesn't. IEEE Xplore turns the proxy itself away (418), in any browser: the window says so,
+and the way in is IEEE's own site with its institutional sign-in. `--keep-open` keeps it
 open for more (supplementary material) until you close it. It works for every publisher
 UU subscribes to, and like `--auth browser` it needs a screen.
 
@@ -273,6 +281,30 @@ and stops after 25 (`--max`), so a list that keeps growing can't turn into syste
 downloading. A DOI already in `watch.log` is skipped, also after a restart; to try one
 again, use `uu library get`. Ctrl+C stops it.
 
+Some sites turn the window away but let your everyday browser through: ScienceDirect's
+Cloudflare check answers the window's "View PDF" with a 403 (six times out of six on
+29-10-2026; the same click in Firefox gave the PDF), and IEEE Xplore answers the proxy with
+418. Give `open`, `get` or `watch` a folder with `--pickup`, and on such a refusal the window
+closes and opens the same proxy link in your own browser (`wslview`, `explorer.exe` from
+WSL, or `xdg-open`). Save the PDF into that folder: the first new PDF there that carries the
+article's DOI (publishers put it in the PDF's metadata) is moved to the output folder under
+the DOI's name, as if the window had saved it, and `watch.log` gets its line. Any other new
+file is named once and left alone. Nothing is disguised: the site sees your own browser.
+
+```sh
+uu library watch -o ~/thesis/literature/inbox --pickup ~/documents
+```
+
+Where you had to click to get the PDF, the window writes that down in `clicks.jsonl` in the
+same folder, one JSON object per line: the page and the link or button you clicked (its
+text, id, classes and address), what came back in the ten seconds after it (pages and script
+fetches through UU's proxy, and files from anywhere, with their status and type; analytics
+are left out), and the PDF that came of it. It is there to see per publisher which button
+gives the PDF, and teach the window to press it itself. Addresses go in with the names of
+their query parameters but not their values, which can hold a login ticket or a signed
+download link. A click in a form field is left out, and no field's value is ever read: it
+could be your password.
+
 `elsevier` uses Elsevier's Article Retrieval API, the route Elsevier allows for automated
 access; its website terms forbid scripts that download from ScienceDirect. Get a personal
 API key at [dev.elsevier.com](https://dev.elsevier.com/apikey/manage) and set
@@ -281,11 +313,62 @@ the request as UU's, from UU's network (on campus or eduroam). Elsewhere it need
 institutional token (`ELSEVIER_INSTTOKEN`), which only the library can request. The CLI
 checks access first and says so when there is none.
 
+`scopus` searches Scopus, Elsevier's citation database, through the same proxy and
+window. It opens the results page with your query in its address (an advanced search,
+`TITLE-ABS-KEY(…)` and the rest of Scopus's syntax) and prints the query too, to paste
+into the advanced search if Scopus doesn't take it from the address. You look at the
+hits and click Export as on any other day: every file you download in the window (CSV,
+RIS, BibTeX) is saved as `scopus-<date>.<ext>`, and `scopus.log` in the same folder gets
+a line per file with the date, the query and the file name. Close the window when you're
+done. `--queries` takes a file with one query per line (`#` starts a comment) and opens a
+window for each in turn, with one login for all of them, so a search you wrote down
+beforehand runs in one go. Scopus's terms forbid scripts that harvest it, so the CLI never
+pages through results or exports anything itself; its API needs a key plus UU's network.
+Behind the library proxy, Scopus's page can't fetch its own export: the file comes from
+Scopus's exports host, which doesn't allow the proxy's address, so the browser blocks it.
+The window fetches that one file for the page and hands it over, and the export saves as
+usual.
+
 UU's licences allow scholarly and personal use, not systematically downloading large
 parts of the material ([conditions of use](https://www.uu.nl/en/university-library/searching-for-literature/conditions-of-use-electronic-journals-e-books-en-databases)),
 and publishers can cut off the whole university when they see it. All three commands
 fetch only the articles you name, `open` and `get` one per run in a window you see, and
 `elsevier` pauses between them.
+
+#### A literature search to keep
+
+`scopus --queries` is an easy way to run a whole literature search and keep it: every hit
+with its title, authors, year, venue, DOI and abstract, in one CSV per query, and
+`scopus.log` says which query each file answers. The papers themselves can wait: the DOIs
+fetch them later, when you need them.
+
+1. Put the queries in a file, one per line, with a `#` comment above each to say what it
+   is for:
+
+   ```text
+   # Q1 · argument mining on policy texts
+   TITLE-ABS-KEY("argument* mining" AND (policy OR legislat*)) AND PUBYEAR > 2004
+   ```
+
+2. Run them: `uu library scopus --queries queries.txt -o lit/scopus/`. A window opens for
+   the first query.
+3. Scopus may ask you to sign in with Elsevier before it lets you export: the library's
+   login gets you in to search, the export needs an Elsevier account. Sign in once; the
+   next windows of the same run keep the session.
+4. Select all the hits, then Export → CSV, with *Citation information*, *Bibliographical
+   information* and *Abstract & keywords* ticked. Leave the full texts for later: a book
+   or a journal issue comes as one big file.
+5. Wait for `Saved: …` in the terminal before you close the window. The file is saved once
+   the download has finished, so a window closed too soon loses it. Then run that one query
+   again: `uu library scopus '<query>' -o lit/scopus/`.
+
+Later, the DOIs in the CSVs get you the papers:
+
+- **an open copy** through [OpenAlex](https://openalex.org), a free index of scholarly
+  works: `https://api.openalex.org/works/doi:<doi>` names in `best_oa_location` where a
+  free version is (the publisher's open access, a repository, arXiv);
+- **the rest** through the library: `uu library get <doi>`, or a list of DOIs in
+  `wanted.txt` for `uu library watch`.
 
 ### GitLab
 

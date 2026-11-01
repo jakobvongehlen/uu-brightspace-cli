@@ -1,15 +1,21 @@
-"""Pieces that need no browser: tokens, saved credentials, schedules and filenames."""
+"""Pieces that need no browser: tokens, saved credentials, schedules, filenames and the network."""
 
 from __future__ import annotations
 
+import datetime
 import stat
 import time
 from argparse import Namespace
+from types import SimpleNamespace
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from fake_uu import PASSWORD, SOLISID, TOTP_SECRET, make_jwt
-from uu_cli import paths
+from uu_cli import browser, paths
 from uu_cli.auth import credentials
 from uu_cli.services.brightspace import api
 from uu_cli.services.brightspace.discussions import html_to_text, render_topic, split_quote, thread
@@ -204,3 +210,64 @@ def test_safe_filename():
     assert paths.safe_filename("a\\b\nc ") == "a_b c"
     assert paths.safe_filename("") == "untitled"
     assert len(paths.safe_filename("x" * 500)) == 180
+
+
+# ── the network Chromium goes through ─────────────────────────────────────────
+NETWORK_ENV = ["HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE"]
+
+
+@pytest.fixture
+def no_network_env(monkeypatch):
+    for var in NETWORK_ENV:
+        monkeypatch.delenv(var, raising=False)
+
+
+def ca_pem(name: str) -> bytes:
+    """A self-signed CA certificate, as PEM."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def test_network_without_a_proxy_changes_nothing(no_network_env):
+    assert browser.network() == (None, [])
+
+
+def test_network_takes_the_proxy_and_its_login_from_https_proxy(no_network_env, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://student:p%40ss@localhost:3128")
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+
+    proxy, trust = browser.network()
+
+    assert proxy == {"server": "http://localhost:3128", "username": "student", "password": "p@ss",
+                     "bypass": "localhost,127.0.0.1"}
+    assert trust == []
+
+
+def test_network_trusts_only_the_cas_ssl_cert_file_adds(no_network_env, monkeypatch, tmp_path):
+    public, own = ca_pem("A public root"), ca_pem("The proxy's CA")
+    (tmp_path / "system.pem").write_bytes(public)
+    (tmp_path / "bundle.pem").write_bytes(public + own)
+    (tmp_path / "own.pem").write_bytes(own)
+    monkeypatch.setattr(browser.ssl, "get_default_verify_paths",
+                        lambda: SimpleNamespace(openssl_cafile=str(tmp_path / "system.pem")))
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "bundle.pem"))
+
+    _, trust = browser.network()
+
+    [own_hash] = browser._spki_hashes(tmp_path / "own.pem")
+    assert trust == [f"--ignore-certificate-errors-spki-list={own_hash}"]
+
+
+def test_network_trusts_nothing_when_the_system_bundle_is_unreadable(no_network_env, monkeypatch, tmp_path):
+    (tmp_path / "bundle.pem").write_bytes(ca_pem("The proxy's CA"))
+    monkeypatch.setattr(browser.ssl, "get_default_verify_paths",
+                        lambda: SimpleNamespace(openssl_cafile=str(tmp_path / "missing.pem")))
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "bundle.pem"))
+
+    assert browser.network() == (None, [])
