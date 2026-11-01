@@ -29,6 +29,10 @@ UU_CODE_FIELD = "#nffc"
 # How long the --auth browser window waits for you to finish logging in.
 WINDOW_TIMEOUT_S = 300
 
+# Where UU's login sends session cookies from a session it has ended since: "You're signed out",
+# without a form (seen 25-10-2026). The last run kept those cookies.
+UU_SIGNED_OUT = "https://login.uu.nl/nidp/app/logout"
+
 
 def log_in(ctx: BrowserContext, start_url: str, args, name: str = "Brightspace") -> None:
     """Log in the way args.auth says (after auth.ready_to_login): in a window, or here."""
@@ -42,7 +46,7 @@ def single_sign_on(ctx: BrowserContext, start_url: str) -> bool:
     """Open start_url; True when an existing UU session logs in without showing the form."""
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     page.goto(start_url, wait_until="load", timeout=30_000)
-    return not _reach_login_form(page, urlparse(start_url).hostname)
+    return not _reach_login_form(page, start_url)
 
 
 def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
@@ -60,7 +64,7 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
 
     print(f"[AUTH] Navigating to {name}...", file=sys.stderr)
     page.goto(start_url, wait_until="load", timeout=30_000)
-    if not _reach_login_form(page, urlparse(start_url).hostname):
+    if not _reach_login_form(page, start_url):
         print(f"[AUTH] ✓ Already logged in at UU: {page.url}", file=sys.stderr)
         return
     if page.locator("#Ecom_User_ID").count():
@@ -214,7 +218,7 @@ def browser_login(ctx: BrowserContext, start_url: str, name: str = "Brightspace"
 
     print(f"[AUTH] Navigating to {name}...", file=sys.stderr)
     page.goto(start_url, wait_until="load", timeout=30_000)
-    if not _reach_login_form(page, target):
+    if not _reach_login_form(page, start_url):
         print(f"[AUTH] ✓ Already logged in at UU: {page.url}", file=sys.stderr)
         return
 
@@ -225,7 +229,7 @@ def browser_login(ctx: BrowserContext, start_url: str, name: str = "Brightspace"
         win_page = window.new_page()
         win_page.goto(start_url, wait_until="load", timeout=30_000)
         try:
-            _reach_login_form(win_page, target)  # answer SURFconext's picker for you
+            _reach_login_form(win_page, start_url)  # answer SURFconext's picker for you
         except RuntimeError:
             pass  # no form we know; you can still log in by hand
         landed = _wait_until_back(win_page, target, WINDOW_TIMEOUT_S)
@@ -258,20 +262,32 @@ def _wait_until_back(page: Page, target_host: str | None, timeout_s: float) -> s
                        f"it was at {page.url}")
 
 
-def _reach_login_form(page: Page, target_host: str | None, timeout_s: float = 30) -> bool:
-    """Follow a service's redirects to the Solis-id form; False when they end on target_host instead.
+def _reach_login_form(page: Page, start_url: str, timeout_s: float = 30) -> bool:
+    """Follow a service's redirects to the Solis-id form; False when they end on its host instead.
 
     UU's code page counts as the form too: a service that wants MFA (bookings.uu.nl) gets
-    it asked even while UU's session lasts. Picks UU when SURFconext asks for an institution. Ending up (and staying) back on the
-    service without a form means UU's session logged us in already.
+    it asked even while UU's session lasts. Picks UU when SURFconext asks for an institution.
+    Ending up (and staying) back on the service without a form means UU's session logged us in
+    already. When UU says it has signed the saved session out, drops the saved cookies and opens
+    start_url again, once.
     """
+    target_host = urlparse(start_url).hostname
     deadline = time.monotonic() + timeout_s
     picked_on = None
     on_target_since = None
+    started_over = False
     while time.monotonic() < deadline:
         try:
             if page.locator("#Ecom_User_ID").count() or page.locator(UU_CODE_FIELD).count():
                 return True
+            if page.url.startswith(UU_SIGNED_OUT) and not started_over:
+                print("[AUTH] UU has signed the saved session out; logging in afresh",
+                      file=sys.stderr)
+                started_over = True
+                page.context.clear_cookies()
+                page.goto(start_url, wait_until="load", timeout=30_000)
+                deadline = time.monotonic() + timeout_s
+                continue
             host = urlparse(page.url).hostname or ""
             if host.endswith("surfconext.nl"):
                 _give_consent(page)  # still logged in at UU, but new to this service

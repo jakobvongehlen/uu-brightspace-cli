@@ -2,7 +2,7 @@
 GitLab, edu.nl and SURFfilesender's login, served through Playwright routing.
 
 It models what the CLI relies on, not the real services: a NetIQ-style form with a one-time-code
-step and a single-sign-on session, SAML-style hops back that set a session cookie, a D2L token
+step, a single-sign-on session and the signed-out page for one UU has ended, SAML-style hops back that set a session cookie, a D2L token
 in localStorage, SURFconext's institution picker in front of Konjoin, edu.nl and
 SURFfilesender, the library proxy's login link in front of an article with a PDF, GitLab's own
 Solis-ID sign-in with CSRF-checked API calls, edu.nl's shortening form and overview,
@@ -14,9 +14,11 @@ machine. (SURFfilesender's REST API isn't browser traffic: tests/test_filesender
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import time
+import zipfile
 from urllib.parse import parse_qs, quote, urlparse
 
 import pyotp
@@ -25,6 +27,7 @@ BRIGHTSPACE = "https://uu.brightspace.com"
 KONJOIN = "https://uu.konjoin.nl"
 SURFCONEXT = "https://engine.surfconext.nl"
 LIBRARY = "https://utrechtuniversity.idm.oclc.org"
+EXPORTS = "https://exports-scopus-com.utrechtuniversity.idm.oclc.org"  # exports.scopus.com behind the proxy
 GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
@@ -72,6 +75,12 @@ OTP_FORM = """
   <input id="nffc" name="nffc" type="text" autocomplete="one-time-code" maxlength="6">
   <button id="loginButton2" type="submit">Verify</button>
 </form>"""
+
+# Where UU's login sends a session cookie it no longer knows (seen 25-10-2026): no form, and the
+# stale cookie stays, so coming back with it lands here again.
+SIGNED_OUT = """<h1>You're signed out</h1>
+<p>Your session has been logged out. It is recommended that you close your browser to complete
+the termination of this session.</p>"""
 
 WAYF = f"""<h1>Select an institution to log in</h1>
 <ul>
@@ -244,7 +253,31 @@ ARTICLE = ('{meta}<h1>A fake article</h1><a id="pdf" href="{pdf}" target="_blank
            '<a id="issue" href="/issue/download">Download full issue</a>')
 CITATION_PDF = '<meta name="citation_pdf_url" content="{url}">'
 ARTICLE_PDF = b"%PDF-1.7\n% fake article\n"
-ISSUE_ZIP = b"PK\x03\x04% fake issue\n"
+
+
+def zip_of(files: dict[str, bytes]) -> bytes:
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return data.getvalue()
+
+
+# An issue as ScienceDirect's "Download full issue" gives it: each PDF carries its own DOI in its
+# metadata, and the files are named after their cut-off titles.
+ARTICLE_IN_ISSUE = b"%PDF-1.7\n<</doi (10.1016/J.KNOSYS.2025.113564)>>\n% fake article\n"
+ISSUE_ZIP = zip_of({
+    "Editorial-Board_2025_Knowledge-Based-Systems.pdf": b"%PDF-1.7\n% no DOI\n",
+    "A-fake-article_2025_Knowledge-Based-Systems.pdf": ARTICLE_IN_ISSUE,
+    "Another-fake-article_2025_Knowledge-Based-Syst.pdf": b"%PDF-1.7\n<</doi (10.1016/j.knosys.2025.113500)>>\n",
+})
+
+# Scopus's results page behind the proxy, trimmed to its Export button; the export carries the query.
+SCOPUS_RESULTS = '<h1>Scopus: {n} documents found</h1><a id="export" href="/scopus/export?s={s}">Export</a>'
+
+
+def scopus_csv(query: str) -> bytes:
+    return f'"Title","Query"\n"A fake hit","{query}"\n'.encode()
 
 # GitLab's sign-in page with its Solis-ID tab (LDAP), as served on 22-10-2026: GitLab's script
 # renders the password field into the placeholder after the page loads.
@@ -336,6 +369,14 @@ class FakeUU:
         self.citation_pdf_url: str | None = "/article/main.pdf"  # the page's tag for search engines
         self.clicks_pdf = True      # you, at the window, click "View PDF" (when by_hand)
         self.clicks_issue = False   # you click "Download full issue" instead
+        self.page_fetches: list[str] = []  # what the article page's script fetches (and doesn't get)
+        self.login_aborts = 0       # proxy login links stopped before their page (net::ERR_ABORTED)
+        self.clicks_export = True   # you click Export on Scopus's results (when by_hand)
+        self.export_dialog = False  # Scopus saves the export through the browser's save dialog
+        self.export_elsewhere = False  # the page fetches the export from the exports host, which blocks it (CORS)
+        self.prepared_export = ""   # the query of the export waiting on the exports host
+        self.scopus_queries: list[str] = []  # the queries Scopus's results page was opened with
+        self.after_library_login = f"{LIBRARY}/article"  # where the proxy sends you after UU's login
         self.elsewhere: list[str] = []  # requests for hosts this fake doesn't serve (aborted)
         self.gitlab_logins = 0      # completed sign-ins at GitLab
         self.gitlab_two_factor = False  # you turned on GitLab's own two-factor login
@@ -384,6 +425,7 @@ class FakeUU:
             KONJOIN: self._konjoin,
             SURFCONEXT: self._surfconext,
             LIBRARY: lambda *a: self._library(*a, by_hand=by_hand),
+            EXPORTS: self._exports,
             GITLAB: lambda *a: self._gitlab(*a, by_hand=by_hand),
             EDUNL: self._edunl,
             FILESENDER: self._filesender,
@@ -397,6 +439,8 @@ class FakeUU:
 
     # ── UU's login (the identity provider) ────────────────────────────────────
     def _idp(self, route, req, url, by_hand: bool = False) -> None:
+        if url.path == "/nidp/app/logout":
+            return _html(route, SIGNED_OUT)
         if url.path != "/nidp/app/login":
             return route.fulfill(status=404, body="not found")
         query = parse_qs(url.query)
@@ -404,10 +448,13 @@ class FakeUU:
         if req.method == "GET":
             if sp in VIA_SURFCONEXT:  # only SURFconext's picker links here
                 self.wayf_choices += 1
-            if "IDP_SESSION=" in _cookies(req):  # single sign-on: still logged in at UU
+            session = re.search(r"IDP_SESSION=([^;]*)", _cookies(req))
+            if session and session[1] == "1":  # single sign-on: still logged in at UU
                 if sp in self.step_up:  # but this service wants a code (MFA) every time
                     return _redirect(route, f"{MFA}/osp/a/TOP/auth/oauth2/auth?sp={sp}")
                 return self._back_to(route, sp)
+            if session:  # a session UU has ended since
+                return _redirect(route, f"{IDP}/nidp/app/logout")
             you = _by_hand({"Ecom_User_ID": SOLISID, "Ecom_Password": PASSWORD}) if by_hand else ""
             return _html(route, LOGIN_FORM.format(sp=sp) + you)
         form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
@@ -470,6 +517,9 @@ class FakeUU:
             return _redirect(route, f"{IDP}/nidp/app/login?sp=brightspace")
         if path in ("/", "/d2l/home"):
             return _html(route, HOME.replace("TOKEN", self.token))
+        if path == "/d2l/common/dialogs/quickLink/quickLink.d2l":  # a link to a course file
+            file_id = parse_qs(url.query).get("fileId", [""])[0]  # parse_qs decodes + and %2f
+            return _redirect(route, f"{BRIGHTSPACE}{COURSE}/{quote(file_id)}")
         name = path.rsplit("/", 1)[-1]
         if path.startswith(COURSE + "/") and name.endswith(".pdf"):
             return route.fulfill(status=200, body=PDF, headers={
@@ -522,12 +572,31 @@ class FakeUU:
             return _json(route, project)
         route.fulfill(status=404, body="not found")
 
+    # ── Scopus's exports host behind the proxy: the file, without a CORS header for the proxy's address ──
+    def _exports(self, route, req, url) -> None:
+        if url.path.startswith("/export_") and self.prepared_export:
+            # The host allows Scopus's own address, not the proxy's (Playwright would allow any by default).
+            return route.fulfill(status=200, body=scopus_csv(self.prepared_export), headers={
+                "Content-Type": "binary/octet-stream", "Access-Control-Allow-Origin": "https://www.scopus.com"})
+        route.fulfill(status=404, body="not found")
+
     # ── the library proxy (EZproxy) ───────────────────────────────────────────
     def _library(self, route, req, url, by_hand: bool = False) -> None:
         path = url.path
         logged_in = "ezproxy=" in _cookies(req)
         if path == "/login":
             self.library_links.append(url.query)
+            if self.login_aborts:
+                self.login_aborts -= 1
+                return route.abort("aborted")
+            # EZproxy takes everything after url= as the address, its own query included.
+            raw_target = url.query.split("url=", 1)[1] if "url=" in url.query else ""
+            if urlparse(raw_target).netloc == "www.scopus.com":
+                query = urlparse(raw_target).query
+                self.scopus_queries.append(parse_qs(query).get("s", [""])[0])
+                self.after_library_login = f"{LIBRARY}/scopus/results?{query}"
+                return _redirect(route, self.after_library_login if logged_in
+                                 else f"{IDP}/nidp/app/login?sp=library")
             target = urlparse(parse_qs(url.query).get("url", [""])[0])
             if logged_in and target.path.endswith(".pdf"):  # a publisher's PDF, proxied
                 return _redirect(route, f"{LIBRARY}{target.path}")
@@ -536,17 +605,42 @@ class FakeUU:
             return _redirect(route, f"{IDP}/nidp/app/login?sp=library")
         if path == "/Shibboleth.sso/SAML2/POST":
             self.library_logins += 1
-            return _redirect(route, f"{LIBRARY}/article", cookie="ezproxy=l1b; Path=/")
+            return _redirect(route, self.after_library_login, cookie="ezproxy=l1b; Path=/")
         if not logged_in:
             return route.fulfill(status=403, body="not logged in at the proxy")
+        if path == "/scopus/results":
+            s = parse_qs(url.query).get("s", [""])[0]
+            you = "<script>setTimeout(() => document.getElementById('export').click(), 300)</script>"
+            if self.export_dialog:  # the page fetches the export and writes it through the dialog
+                you = ("<script>setTimeout(async () => {"
+                       " const csv = await (await fetch(document.getElementById('export').href)).text();"
+                       " const file = await showSaveFilePicker({suggestedName: 'scopus.csv'});"
+                       " const w = await file.createWritable(); await w.write(csv); await w.close();"
+                       " }, 300)</script>")
+            if self.export_elsewhere:  # prepared, then fetched from the exports host to save as a blob
+                self.prepared_export = s
+                you = ("<script>setTimeout(async () => {"
+                       f" const b = await (await fetch('{EXPORTS}/export_7ff0_2026-10-25T094554.csv')).blob();"
+                       " const a = document.createElement('a'); a.href = window.URL.createObjectURL(b);"
+                       " a.download = 'scopus.csv'; document.body.append(a); a.click();"
+                       " }, 300)</script>")
+            page = SCOPUS_RESULTS.format(n=1, s=quote(s, safe=""))
+            return _html(route, page + (you if by_hand and self.clicks_export else ""))
+        if path == "/scopus/export":
+            return route.fulfill(status=200, body=scopus_csv(parse_qs(url.query).get("s", [""])[0]), headers={
+                "Content-Type": "text/csv",
+                "Content-Disposition": 'attachment; filename="scopus.csv"',
+            })
         if path == "/article":
             meta = CITATION_PDF.format(url=self.citation_pdf_url) if self.citation_pdf_url else ""
             # You, at the window: click "View PDF", or "Download full issue".
             link = "issue" if self.clicks_issue else "pdf"
             you = f"<script>setTimeout(() => document.getElementById('{link}').click(), 300)</script>"
             clicks = by_hand and (self.clicks_pdf or self.clicks_issue)
-            return _html(route, ARTICLE.format(meta=meta, pdf=self.article_pdf) + (you if clicks else ""))
-        if path == self.article_pdf or path.startswith("/content/pdf/"):  # SpringerLink's PDFs
+            fetches = (f"<script>for (const u of {json.dumps(self.page_fetches)}) fetch(u).catch(() => null)</script>"
+                       if self.page_fetches else "")
+            return _html(route, ARTICLE.format(meta=meta, pdf=self.article_pdf) + fetches + (you if clicks else ""))
+        if path == self.article_pdf.split("?")[0] or path.startswith("/content/pdf/"):  # SpringerLink's PDFs
             return route.fulfill(status=200, body=ARTICLE_PDF,
                                  headers={"Content-Type": "application/pdf"})
         if path == "/issue/download":
@@ -554,6 +648,10 @@ class FakeUU:
                 "Content-Type": "application/zip",
                 "Content-Disposition": 'attachment; filename="issue 12.zip"',
             })
+        if path.startswith("/craft/cdn-cgi/"):  # ScienceDirect's PDF check, which turns the window away
+            return route.fulfill(status=403, body="")
+        if path.startswith("/document/"):  # IEEE Xplore's article pages, which do too
+            return route.fulfill(status=418, body="Unable to Load Page")
         route.fulfill(status=404, body="not found")
 
     # ── GitLab (git.science.uu.nl) ────────────────────────────────────────────

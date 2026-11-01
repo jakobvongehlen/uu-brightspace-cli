@@ -53,6 +53,21 @@ def test_login_with_saved_credentials(fake_uu, monkeypatch, capsys):
     assert fake_uu.logins == 1
 
 
+def test_login_starts_over_when_uu_has_ended_the_saved_session(fake_uu, secret_env, state, capsys):
+    # The last run kept its session cookies; UU has ended that session since, so its login sends
+    # them to "You're signed out" instead of the form (seen 25-10-2026).
+    (state / "session").mkdir()
+    (state / "session" / "cookies.json").write_text(json.dumps([
+        {"name": "IDP_SESSION", "value": "ended", "domain": "login.uu.nl", "path": "/", "expires": -1},
+    ]))
+
+    code, _, err = run(["login"], capsys)
+
+    assert code == 0, err
+    assert "signed the saved session out" in err
+    assert fake_uu.logins == 1 and len(fake_uu.codes) == 1
+
+
 def test_courses_uses_cached_token_without_login(fake_uu, capsys):
     api.save_token(fake_uu.token)
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from uu_cli import auth, browser, paths
-from uu_cli.services.library import articles, elsevier, proxy
+from uu_cli.services.library import articles, elsevier, proxy, scopus
 
 # Between two articles from Elsevier's API: one researcher's pace, not a crawler's.
 PAUSE_S = 1.0
@@ -65,7 +65,7 @@ def _one_article(args, fetch: bool) -> int:
     print(f"[LIBRARY] Opening the article through UU's library. Log in there if UU asks, then "
           f"{then}; it's saved to {out}/.", file=sys.stderr)
     saved, _ = _in_window(url, articles.doi_of(args.article), out, args.session_dir, fetch,
-                          keep_open=getattr(args, "keep_open", False))
+                          keep_open=getattr(args, "keep_open", False), pickup=_pickup(args))
     if not saved:
         print("No PDF saved.", file=sys.stderr)
         return 1
@@ -121,7 +121,7 @@ def cmd_watch(args) -> int:
                 time.sleep(max(0.0, last + WATCH_PAUSE_S - time.monotonic()))
                 print(f"[WATCH] {step} {doi}", file=sys.stderr)
                 saved, others = _in_window(articles.article_url(doi), doi, out, args.session_dir,
-                                           fetch=True)
+                                           fetch=True, pickup=_pickup(args))
                 fetched, last = fetched + 1, time.monotonic()
                 with_pdf += bool(saved)
                 result = str(saved[0].resolve()) if saved else "no PDF"
@@ -173,12 +173,26 @@ def _has_screen(cmd: str) -> bool:
     return False
 
 
+def _pickup(args) -> Path | None:
+    """The folder --pickup names, or None; one that isn't there is said once and left out."""
+    if not getattr(args, "pickup", None):
+        return None
+    folder = Path(args.pickup).expanduser()
+    if not folder.is_dir():
+        print(f"[LIBRARY] --pickup {folder}: no such folder, so no hand-off to your own browser.",
+              file=sys.stderr)
+        args.pickup = None
+        return None
+    return folder
+
+
 def _in_window(url: str, doi: str | None, out: Path, session_dir: str, fetch: bool,
-               keep_open: bool = False) -> tuple[list[Path], list[Path]]:
+               keep_open: bool = False, pickup: Path | None = None) -> tuple[list[Path], list[Path]]:
     with sync_playwright() as pw:
         ctx = browser.launch(pw, session_dir)
         try:
-            return proxy.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch)
+            return proxy.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch,
+                                      pickup=pickup)
         finally:
             browser.save_session(ctx, session_dir)
 
@@ -217,13 +231,57 @@ def cmd_elsevier(args) -> int:
     return 1 if failed else 0
 
 
+def cmd_scopus(args) -> int:
+    """Search Scopus through UU's library in a window; the exports you make there are saved."""
+    if not _has_screen(args.cmd):
+        return 1
+    if bool(args.query) == bool(args.queries):
+        print("ERROR: give one query, or --queries with a file of them (one per line).", file=sys.stderr)
+        return 2
+    queries = [args.query] if args.query else _lines(Path(args.queries))
+    if not queries:
+        print(f"ERROR: no queries in {args.queries} (blank lines and # comments are skipped).",
+              file=sys.stderr)
+        return 2
+    out = Path(args.output)
+    total = 0
+    for n, query in enumerate(queries, 1):
+        print(f"[SCOPUS] {n}/{len(queries)}: {_printable(query)}", file=sys.stderr)
+        print("[SCOPUS] Log in if UU asks. If the advanced search doesn't show this query, paste it "
+              f"there. Click Export for the hits you want; every file is saved to {out}/. Close the "
+              "window when you're done.", file=sys.stderr)
+        with sync_playwright() as pw:
+            ctx = browser.launch(pw, args.session_dir)
+            try:
+                saved = scopus.search(ctx, query, out)
+            finally:
+                browser.save_session(ctx, args.session_dir)
+        total += len(saved)
+        if not saved:
+            print("[SCOPUS] No export saved for this query.", file=sys.stderr)
+    plural = "query" if len(queries) == 1 else "queries"
+    print(f"[SCOPUS] Done: {total} file(s) for {len(queries)} {plural}; {out / scopus.LOG} lists them.",
+          file=sys.stderr)
+    return 0 if total else 1
+
+
+def _printable(text: str) -> str:
+    """text as the terminal may show it: printable characters only, so it can't send escape codes."""
+    return "".join(c if c.isprintable() else "?" for c in text)
+
+
 COMMANDS = {"open": cmd_open, "get": cmd_get, "link": cmd_link, "watch": cmd_watch,
-            "elsevier": cmd_elsevier}
+            "elsevier": cmd_elsevier, "scopus": cmd_scopus}
+
+
+PICKUP_HELP = ("When a site turns the window away (ScienceDirect's bot check, IEEE Xplore), open the "
+               "article in your own browser and take the PDF you save into this folder from there")
 
 
 def _window_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("article", help="A DOI (10.1016/…) or the article's web address")
     sp.add_argument("-o", "--output", default=".", help="Folder for the PDF (default: here)")
+    sp.add_argument("--pickup", metavar="FOLDER", help=PICKUP_HELP)
     sp.add_argument("--session-dir", default=str(paths.SESSION_DIR),
                     help="Browser profile, shared with the other services (one UU login)")
 
@@ -254,6 +312,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
                     help=f"Folder for the PDFs, {WANTED} and {WATCH_LOG} (default: here)")
     wa.add_argument("--max", type=int, default=WATCH_MAX,
                     help=f"Stop after this many articles (default: {WATCH_MAX})")
+    wa.add_argument("--pickup", metavar="FOLDER", help=PICKUP_HELP)
     wa.add_argument("--session-dir", default=str(paths.SESSION_DIR),
                     help="Browser profile, shared with the other services (one UU login)")
 
@@ -261,6 +320,16 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
                                          "(ELSEVIER_API_KEY; full text from UU's network)")
     el.add_argument("articles", nargs="+", help="DOIs of Elsevier articles")
     el.add_argument("-o", "--output", default=".", help="Folder for the PDFs (default: here)")
+
+    sc = sub.add_parser("scopus", help="Search Scopus through UU's library in a browser window; "
+                                       "the exports you make there (CSV, RIS, BibTeX) are saved")
+    sc.add_argument("query", nargs="?", help="An advanced-search query, e.g. TITLE-ABS-KEY(aspic*)")
+    sc.add_argument("--queries", help="A file with one query per line, each in its own window "
+                                      "(blank lines and # comments are skipped)")
+    sc.add_argument("-o", "--output", default=".",
+                    help=f"Folder for the exports and {scopus.LOG} (default: here)")
+    sc.add_argument("--session-dir", default=str(paths.SESSION_DIR),
+                    help="Browser profile, shared with the other services (one UU login)")
 
     args = p.parse_args(argv)
     sys.exit(COMMANDS[args.cmd](args))
