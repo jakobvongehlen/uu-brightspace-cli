@@ -9,8 +9,8 @@ import pyotp
 import pytest
 
 from fake_uu import PASSWORD, SOLISID, TOTP_SECRET
-from uu_cli import auth, login
-from uu_cli.services.bookings import commands
+from uu_cli import auth, login, paths
+from uu_cli.services.bookings import api, commands
 from uu_cli.services.bookings.cli import main as bookings
 from uu_cli.services.brightspace.cli import main as brightspace
 
@@ -150,10 +150,50 @@ def test_book_by_name(fake_uu, at_terminal, capsys):
 
 
 @pytest.mark.browser
-def test_a_space_that_isnt_free_is_not_held(fake_uu, at_terminal, capsys):
+def test_a_space_that_doesnt_exist_is_not_held(fake_uu, at_terminal, capsys):
     code, _, err = run(bookings, ["book", "UBUSPseats", "11111", *WHEN, "--accept-terms"], capsys)
 
-    assert code == 1 and "isn't free then" in err
+    assert code == 1 and "has no seat 11111" in err
+    assert fake_uu.bookings_held == []
+
+
+@pytest.mark.browser
+def test_a_seat_the_search_doesnt_list_is_booked_on_its_own_page(fake_uu, at_terminal, capsys):
+    code, out, err = run(bookings, ["book", "UBUSPseats", "97577", *WHEN, "--accept-terms"], capsys)
+
+    assert code == 0, err
+    assert out == "Booked 4th floor 4.06 077, 2026-10-25 10:00-12:00.\n"
+    held = fake_uu.bookings_held[0]
+    assert (held["seat_id"], held["start"], held["end"]) == ("97577", "2026-10-25 10:00:00",
+                                                            "2026-10-25 12:00:00")
+    assert len(fake_uu.bookings_made) == 1 and fake_uu.bookings_released == []
+
+
+@pytest.mark.browser
+def test_a_seat_the_search_doesnt_list_that_isnt_free_is_not_held(fake_uu, at_terminal, capsys):
+    fake_uu.bookings_taken.add("97577 2026-10-25 10:00:00")
+
+    code, _, err = run(bookings, ["book", "UBUSPseats", "97577", *WHEN, "--accept-terms"], capsys)
+
+    assert code == 1 and "isn't free at 10:00" in err
+    assert fake_uu.bookings_held == []
+
+
+@pytest.mark.browser
+def test_a_seats_own_page_says_how_long_it_can_be_booked(fake_uu, at_terminal, capsys):
+    code, _, err = run(bookings, ["book", "UBUSPseats", "97577", "--date", "2026-10-25",
+                                  "--from", "10:00", "--until", "16:00", "--accept-terms"], capsys)
+
+    assert code == 1 and "only free 10:00-14:00 then" in err
+    assert fake_uu.bookings_held == []
+
+
+@pytest.mark.browser
+def test_a_name_the_search_doesnt_list_needs_the_id(fake_uu, at_terminal, capsys):
+    code, _, err = run(bookings, ["book", "UBUSPseats", "4th floor 4.06 077", *WHEN,
+                                  "--accept-terms"], capsys)
+
+    assert code == 1 and "give its id" in err
     assert fake_uu.bookings_held == []
 
 
@@ -167,6 +207,29 @@ def test_a_refused_booking_gives_the_hold_back(fake_uu, at_terminal, capsys):
     assert "no longer available" in err
     assert fake_uu.bookings_made == []
     assert fake_uu.bookings_released == [{"eid": "14888", "id": "0", "session": "50545853"}]
+
+
+@pytest.mark.browser
+def test_a_refused_booking_on_a_seats_own_page_gives_that_hold_back(fake_uu, at_terminal, capsys):
+    fake_uu.bookings_checkout_fails = True
+
+    code, _, err = run(bookings, ["book", "UBUSPseats", "97577", *WHEN, "--accept-terms"], capsys)
+
+    assert code == 1 and "no longer available" in err
+    assert fake_uu.bookings_released == [{"eid": "14903", "id": "70166435", "session": "50545853"}]
+
+
+@pytest.mark.browser
+def test_no_answer_to_the_booking_says_it_may_have_been_made(fake_uu, at_terminal, monkeypatch,
+                                                            capsys):
+    fake_uu.bookings_checkout_hangs = True
+    monkeypatch.setattr(api, "CHECKOUT_S", 2)
+
+    code, out, err = run(bookings, ["book", "UBUSPseats", "97740", *WHEN, "--accept-terms"], capsys)
+
+    assert code == 1 and out == ""
+    assert "didn't answer" in err and "check your email" in err
+    assert (paths.SESSION_DIR / "debug_booking_no_answer.png").exists()
 
 
 @pytest.mark.browser
