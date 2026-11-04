@@ -100,7 +100,7 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
 
     print(f"[AUTH] Waiting for {name}...", file=sys.stderr)
     if not _wait_for_service(page, target):
-        _dump(page, f"debug_not_{name.lower()}")
+        dump_page(page, f"debug_not_{name.lower()}")
         body_text = page.inner_text("body")[:300]
         raise RuntimeError(f"Post-OTP URL is not {name}: {page.url}\nBody: {body_text}")
 
@@ -154,7 +154,7 @@ def _after_password(page: Page, target_host: str | None, timeout_s: float = 20) 
         except PlaywrightError:
             pass  # the page navigated mid-check; look again
         page.wait_for_timeout(250)
-    _dump(page, "debug_otp_missing")
+    dump_page(page, "debug_otp_missing")
     body_text = page.inner_text("body")[:300]
     print(f"[AUTH] OTP not found. Body: {body_text}", file=sys.stderr)
     raise RuntimeError(f"OTP field not found. URL={page.url}")
@@ -290,11 +290,11 @@ def _reach_login_form(page: Page, target_host: str | None, timeout_s: float = 30
         except PlaywrightError:
             pass  # the page navigated mid-check; look again
         page.wait_for_timeout(250)
-    _dump(page, "debug_login_form_missing")
+    dump_page(page, "debug_login_form_missing")
     raise RuntimeError(f"UU login form not found. URL={page.url}")
 
 
-def _dump(page: Page, name: str) -> None:
+def dump_page(page: Page, name: str) -> None:
     """Save a screenshot and the HTML of a page that broke the login, for debugging."""
     page.screenshot(path=str(paths.SESSION_DIR / f"{name}.png"))
     with open(str(paths.SESSION_DIR / f"{name}.html"), "w") as f:

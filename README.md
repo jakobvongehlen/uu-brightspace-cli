@@ -396,6 +396,11 @@ uu bookings cancel '<cancel link>'       # Cancel all of it, or one with --booki
   `options`. `--accessible`, `--power` and `--pc` narrow the results further.
 - **Terms:** booking means agreeing to the library's house rules, so `book` needs
   `--accept-terms`. If the site refuses the booking, the space is released again.
+- **Any space by its id:** `search` shows only the site's 7 best matches. `book` with an id
+  it doesn't list books it on the space's own page (`bookings.uu.nl/seat/<id>`), e.g. the
+  seat you had before (`bookings.json` keeps the ids).
+- **No answer:** if the site doesn't answer the booking within a minute, `book` says so; it
+  may still have been made, so check your email before booking again.
 - **Your bookings:** the site has no list of them. `book` saves each one in `bookings.json`
   next to the token, and `list` reads that file. To see or cancel a booking, pass
   `show`/`cancel` the cancel link from the confirmation email (or just its code).

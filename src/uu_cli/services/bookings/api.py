@@ -8,8 +8,13 @@ while its session lasts. The CLI uses the pages you use, as seen on 24-10-2026:
   lists the free spaces, each with a "Book Now" form.
 - "Book Now" posts that form to /space/booking/form, which holds the space for about ten
   minutes and shows the booking form: your name and email, filled in from your login, and a
-  terms box. Submitting it (/ajax/equipment/checkout) makes the booking.
-- /ajax/equipment/cart/remove gives a held space back.
+  terms box. Submitting it (/ajax/equipment/checkout) makes the booking; an error comes back
+  as the answer's status, shown in a popup, not on the form.
+- The search lists at most 7 "best matches". Every space also has its own page (/seat/<id>, or
+  /space/<id> for a room; ?date=YYYY-MM-DD) with an availability grid: clicking a free slot adds
+  a pending booking (/spaces/availability/booking/add) whose end you pick from a list, and
+  Submit Times (/ajax/space/times) holds it and redirects to the same booking form.
+- /ajax/equipment/cart/remove gives a held space back, with the ids on the form's Remove button.
 - LibAuth (eu.libauth.com) sits between the pages and SURFconext. Once SURFconext sends it your
   login (/login/saml) it sets SimpleSAMLAuthToken and sends you back to the page. It has been
   seen to stop on that page instead; its new cookie still says the login went through.
@@ -21,6 +26,7 @@ while its session lasts. The CLI uses the pages you use, as seen on 24-10-2026:
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -29,8 +35,10 @@ from dataclasses import dataclass
 from urllib.parse import urlencode, urlparse
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from uu_cli import paths
+from uu_cli.login import dump_page
 
 BASE_URL = os.environ.get("UU_BOOKINGS_URL", "https://bookings.uu.nl").rstrip("/")
 HOST = urlparse(BASE_URL).hostname
@@ -62,6 +70,9 @@ FILTERS = {"accessible": "77", "power": "78", "pc": "693"}
 # How long the booking pages may take to answer.
 SETTLE_S = 20
 
+# How long submitting the booking form may take to answer.
+CHECKOUT_S = 60
+
 # The search form's choices: category, type of space and zone, as [value, label] pairs.
 OPTIONS = """() => {
     const opts = sel => [...document.querySelectorAll(sel + ' option')]
@@ -91,6 +102,33 @@ RESULTS = """() => [...document.querySelectorAll('.s-lc-booking-suggestion')].ma
     };
 })"""
 
+
+# A space's own page: its grid has loaded its slots (FullCalendar events).
+GRID_READY = "() => getCurrentTimelineInstance(springyPage.locationId).getEvents().length > 0"
+
+# Click the grid's slot that starts at start ("YYYY-MM-DD HH:MM:SS"), as by hand: free, taken or none.
+PICK_SLOT = """(start) => {
+    const pad = n => String(n).padStart(2, '0');
+    const at = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' '
+        + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    const grid = getCurrentTimelineInstance(springyPage.locationId);
+    const slot = grid.getEvents().find(e => at(e.start) === start);
+    if (!slot) return 'none';
+    if (slot.extendedProps.status !== 0) return 'taken';
+    timeGridClickedOnAvailableRoom(slot, grid);
+    return 'free';
+}"""
+
+# The space's name in its page's heading, without the location after it.
+SPACE_NAME = """() => (document.querySelector('#s-lc-public-header-title')?.firstChild?.textContent
+                       || '').trim()"""
+
+# The pending booking that click made, with the ends it may have; null until the site answers.
+PENDING = """() => {
+    const b = (window.pendingRoomBookings || [])[0];
+    return b ? {id: String(b.id), eid: String(b.eid), seat_id: String(b.seat_id || ''),
+                end: b.end.format('YYYY-MM-DD HH:mm:ss'), options: b.options || []} : null;
+}"""
 
 # The bookings on a confirmation's cancel page, row by row.
 CANCEL_ROWS = """() => [...document.querySelectorAll('.s-lc-cancel-single')].map(btn => {
@@ -183,35 +221,51 @@ def search(ctx: BrowserContext, query: Search) -> list[dict]:
 def book(ctx: BrowserContext, query: Search, seat: str) -> dict:
     """Book the space named seat (its id or name) for query's time; returns what was booked.
 
-    Holds the space through its "Book Now" form, then submits the booking form with its terms
-    box ticked. When anything stops it before the booking is made, the hold is given back.
+    Holds the space through its "Book Now" form when the search lists it, else (by id) on its
+    own page, then submits the booking form with its terms box ticked. When anything stops it
+    before the booking is made, the hold is given back.
     """
     defaults = options(ctx, query.place)["defaults"]
     page = open_page(ctx, query.url(defaults))
-    results = page.evaluate(RESULTS)
-    match = [r for r in results if r["bookable"] and seat in (r["id"], r["name"])]
-    if not match:
-        raise BookingError(f"{seat} isn't free then; `uu bookings search` lists what is")
-    chosen = match[0]
-    if (chosen["start"][11:16], chosen["end"][11:16]) != (query.start, query.end):
-        raise BookingError(f"{chosen['name']} is only free {chosen['start'][11:16]}-"
-                           f"{chosen['end'][11:16]} then, not {query.start}-{query.end}")
-    field = "seat_id" if chosen["seat_id"] else "eid"
-    form = page.locator(f'form[action="/space/booking/form"]:has(input[name="{field}"]'
-                        f'[value="{chosen[field]}"])').first
-    with page.expect_navigation(wait_until="load", timeout=30_000):
-        form.locator("button[type=submit]").click()
+    match = [r for r in page.evaluate(RESULTS) if r["bookable"] and seat in (r["id"], r["name"])]
+    if match:
+        chosen = match[0]
+        if (chosen["start"][11:16], chosen["end"][11:16]) != (query.start, query.end):
+            raise BookingError(f"{chosen['name']} is only free {chosen['start'][11:16]}-"
+                               f"{chosen['end'][11:16]} then, not {query.start}-{query.end}")
+        field = "seat_id" if chosen["seat_id"] else "eid"
+        form = page.locator(f'form[action="/space/booking/form"]:has(input[name="{field}"]'
+                            f'[value="{chosen[field]}"])').first
+        with page.expect_navigation(wait_until="load", timeout=30_000):
+            form.locator("button[type=submit]").click()
+    elif seat.isdigit():  # not among the search's best matches
+        chosen = _hold_on_own_page(ctx, query, seat)
+    else:
+        raise BookingError(f"{seat} isn't among the free spaces the search lists then; to book "
+                           "one it doesn't list, give its id")
     if not page.locator("#s-lc-eq-bform").count():
         raise BookingError(_alert(page) or f"no booking form came up (at {page.url})")
     session = page.evaluate("() => (window.springyPage || {}).sessionId || ''")
     try:
         page.check("#terms")
-        page.click("#btn-form-submit")
-        page.wait_for_selector(".s-lc-eq-booking-status-msg, .alert-danger, #submit-errors:visible",
-                               timeout=SETTLE_S * 1000)
+        try:
+            with page.expect_response(lambda r: "/ajax/equipment/checkout" in r.url,
+                                      timeout=CHECKOUT_S * 1000) as answer:
+                page.click("#btn-form-submit")
+        except PlaywrightTimeout:
+            dump_page(page, "debug_booking_no_answer")
+            raise BookingError(f"bookings.uu.nl didn't answer the booking within {CHECKOUT_S} s. "
+                               "It may still have been made: check your email before booking "
+                               "again.") from None
+        if not answer.value.ok:
+            raise BookingError(_refusal(answer.value))
         status = page.locator(".s-lc-eq-booking-status-msg")
-        if not status.count():
-            raise BookingError(_alert(page) or "the booking form didn't confirm the booking")
+        try:
+            status.first.wait_for(timeout=SETTLE_S * 1000)
+        except PlaywrightTimeout:
+            dump_page(page, "debug_booking_unconfirmed")
+            raise BookingError("bookings.uu.nl took the booking but showed no confirmation; "
+                               "check your email whether it was made.") from None
         done = page.locator("#s-lc-public-page-content").inner_text().strip()
     except BaseException:
         release(page, chosen["eid"], session)
@@ -219,17 +273,78 @@ def book(ctx: BrowserContext, query: Search, seat: str) -> dict:
     return {**chosen, "status": status.first.inner_text().strip(), "confirmation": done}
 
 
+def _hold_on_own_page(ctx: BrowserContext, query: Search, space: str) -> dict:
+    """Hold space for query's time on its own page, as by hand: its slot, its end, Submit Times.
+
+    Ends on the booking form; returns the space as RESULTS lists one.
+    """
+    kind = "seat" if TYPE[query.place] == "-1" else "space"
+    try:
+        page = open_page(ctx, f"{BASE_URL}/{kind}/{space}?date={query.date}")
+    except BookingError:  # "Whoops!"
+        raise BookingError(f"bookings.uu.nl has no {kind} {space}") from None
+    start, end = f"{query.date} {query.start}:00", f"{query.date} {query.end}:00"
+    page.wait_for_function(GRID_READY, timeout=SETTLE_S * 1000)
+    name = page.evaluate(SPACE_NAME) or space
+    if page.evaluate(PICK_SLOT, start) != "free":
+        raise BookingError(f"{space} isn't free at {query.start} on {query.date}")
+    try:
+        page.wait_for_function(PENDING, timeout=SETTLE_S * 1000)
+    except PlaywrightTimeout:
+        raise BookingError(_alert(page) or f"the site didn't take {space} at {query.start}") from None
+    pending = page.evaluate(PENDING)
+    try:
+        if pending["end"] != end:
+            if end not in pending["options"]:
+                last = max(pending["options"] or [pending["end"]])[11:16]
+                raise BookingError(f"{name} is only free {query.start}-{last} then, "
+                                   f"not {query.start}-{query.end}")
+            page.select_option(".b-end-date", end)
+            page.wait_for_function(f"(end) => (({PENDING})() || {{}}).end === end", arg=end,
+                                   timeout=SETTLE_S * 1000)
+        if page.is_disabled("#submit_times"):
+            raise BookingError(f"the site doesn't take {query.start}-{query.end} for {name}")
+        with page.expect_navigation(wait_until="load", timeout=30_000):
+            page.click("#submit_times")
+    except BaseException:  # the pending booking isn't held yet; drop it as its delete icon does
+        page.evaluate("""(id) => typeof removePendingBooking === 'function'
+                         && removePendingBooking(id, springyPage.locationId)""", pending["id"])
+        raise
+    return {"name": name, "details": [], "id": space, "seat_id": pending["seat_id"],
+            "eid": pending["eid"], "start": start, "end": end, "bookable": True}
+
+
 def release(page: Page, eid: str, session) -> None:
-    """Give a held space back (the booking form's Remove button); best effort."""
-    try:  # from the booking page, as its Remove button does (the server checks the referrer)
-        page.evaluate("""([eid, session]) => fetch('/ajax/equipment/cart/remove', {
-            method: 'POST', credentials: 'same-origin',
-            headers: {'X-Requested-With': 'XMLHttpRequest',
-                      'Content-Type': 'application/x-www-form-urlencoded'},
-            body: new URLSearchParams({eid, id: '0', session}).toString()})""",
-                      [str(eid), str(session)])
+    """Give the held spaces back (the booking form's Remove buttons, or eid); best effort."""
+    try:  # from the booking page, as its Remove buttons do (the server checks the referrer)
+        page.evaluate("""([eid, session]) => {
+            const held = [...document.querySelectorAll('.s-lc-eq-remove-single')]
+                .map(b => ({eid: String(b.dataset.eid), id: String(b.dataset.id || '0')}));
+            return Promise.all((held.length ? held : [{eid, id: '0'}]).map(h =>
+                fetch('/ajax/equipment/cart/remove', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: {'X-Requested-With': 'XMLHttpRequest',
+                              'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({...h, session}).toString()})));
+        }""", [str(eid), str(session)])
     except PlaywrightError:
         pass  # the hold runs out by itself after about ten minutes
+
+
+def _refusal(reply) -> str:
+    """What the checkout's error answer says (JSON or HTML), as text."""
+    try:
+        text = reply.text()
+    except PlaywrightError:
+        text = ""
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            text = str(data.get("error") or data.get("message") or text)
+    except ValueError:
+        pass
+    text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", text)).split())
+    return text[:300] or f"bookings.uu.nl refused the booking (HTTP {reply.status})"
 
 
 def _alert(page: Page) -> str:

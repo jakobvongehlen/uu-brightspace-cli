@@ -18,6 +18,7 @@ import html
 import json
 import re
 import time
+from datetime import datetime, timedelta
 from urllib.parse import parse_qs, quote, urlparse
 
 import pyotp
@@ -125,7 +126,7 @@ BOOKING_RESULT = """<div class="media s-lc-booking-suggestion">
   </form></div>"""
 
 BOOKING_FORM = """<div id="s-lc-public-page-content"><h1>Booking Details</h1>
-<button class="s-lc-eq-remove-single" data-eid="{eid}">Remove</button>
+<button class="s-lc-eq-remove-single" data-eid="{eid}"{pending}>Remove</button>
 <form id="s-lc-eq-bform" method="post" action="/ajax/equipment/checkout">
   <input type="hidden" id="session" name="session" value="50545853">
   <input type="checkbox" id="terms" name="terms" value="1"> I agree to the Terms &amp; Conditions.
@@ -137,12 +138,44 @@ BOOKING_FORM = """<div id="s-lc-public-page-content"><h1>Booking Details</h1>
     document.getElementById('btn-form-submit').disabled = !e.target.checked; }};
   document.getElementById('s-lc-eq-bform').onsubmit = async e => {{
     e.preventDefault();
+    if ({hang}) return;  // the site never answers
     const r = await fetch('/ajax/equipment/checkout', {{method: 'POST',
       body: new URLSearchParams(new FormData(e.target))}});
     const text = await r.text();
     if (!r.ok) {{ const err = document.getElementById('submit-errors');
       err.textContent = text; err.style.display = 'block'; return; }}
     document.getElementById('s-lc-public-page-content').innerHTML = text;
+  }};
+</script>"""
+
+# A space's own page (/seat/<id>): the grid's slots, as LibCal's FullCalendar gives them to its
+# own functions, which the CLI calls as a click would; the end list and Submit Times.
+SEAT_PAGE = """<div id="s-lc-public-page-content">
+<h1 id="s-lc-public-header-title">{name} <small>(University Library Utrecht Science Park)</small></h1>
+<a class="s-lc-libauth-logout" href="#">Logout</a>
+<select class="b-end-date"></select><button id="submit_times">Submit Times</button></div>
+<script>
+  var springyPage = {{locationId: 2212, isSeatBooking: true, seatId: {seat}}};
+  var pendingRoomBookings = [];
+  const slots = {slots}.map(([at, status]) =>
+    ({{start: new Date(at.replace(' ', 'T')), extendedProps: {{status, at}}}}));
+  function getCurrentTimelineInstance(lid) {{ return {{getEvents: () => slots}}; }}
+  const moment = s => ({{format: () => s}});
+  async function timeGridClickedOnAvailableRoom(slot, grid) {{
+    const r = await fetch('/spaces/availability/booking/add', {{method: 'POST',
+      body: new URLSearchParams({{seat: '{seat}', start: slot.extendedProps.at}})}});
+    const b = (await r.json()).bookings[0];
+    pendingRoomBookings = [{{...b, end: moment(b.end)}}];
+    document.querySelector('.b-end-date').innerHTML = b.options.map(o =>
+      '<option' + (o === b.end ? ' selected' : '') + '>' + o + '</option>').join('');
+  }}
+  document.querySelector('.b-end-date').onchange = e => {{
+    pendingRoomBookings[0].end = moment(e.target.value); }};
+  document.getElementById('submit_times').onclick = async () => {{
+    const b = pendingRoomBookings[0];
+    const r = await fetch('/ajax/space/times', {{method: 'POST', body: new URLSearchParams(
+      {{id: b.id, eid: b.eid, seat_id: b.seat_id, start: b.start, end: b.end.format()}})}});
+    window.location = (await r.json()).redirect;
   }};
 </script>"""
 
@@ -407,6 +440,10 @@ class FakeUU:
         self.bookings_made: list[dict] = []     # what the booking form's checkout received
         self.bookings_released: list[dict] = []  # holds given back
         self.bookings_checkout_fails = False    # the checkout answers with an error
+        self.bookings_checkout_hangs = False    # the checkout never answers
+        self.bookings_unlisted = [  # free too, but not among the search's best matches
+            ("4th floor 4.06 077", "97577", "14903", "4th floor")]
+        self.bookings_taken: set[str] = set()   # "<seat id> <start>" slots someone else has
         self.bookings_confirmations = {         # the email's code -> bookings its cancel page lists
             "6b27601a6048": [{"id": "45474228", "name": "4th floor 4.06 098",
                               "from": "10:00 Sunday, October 25, 2026",
@@ -772,7 +809,24 @@ class FakeUU:
         if path == "/space/booking/form" and req.method == "POST":
             form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
             self.bookings_held.append(form)
-            return _html(route, BOOKING_FORM.format(eid=form["eid"]))
+            return self._booking_form(route, form["eid"])
+        if seat := re.fullmatch(r"/seat/(\d+)", path):
+            return self._seat_page(route, seat.group(1), query["date"][0])
+        if path == "/spaces/availability/booking/add" and req.method == "POST":
+            form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
+            _, seat, eid, _ = self._space(form["seat"])
+            start = datetime.strptime(form["start"], "%Y-%m-%d %H:%M:%S")
+            ends = [str(start + timedelta(minutes=m)) for m in range(60, 241, 30)]
+            return _json(route, {"bookings": [{"id": 70166435, "eid": int(eid), "seat_id": int(seat),
+                                               "start": form["start"], "end": ends[0],
+                                               "options": ends}]})
+        if path == "/ajax/space/times" and req.method == "POST":
+            form = {k: v[0] for k, v in parse_qs(req.post_data or "").items()}
+            self.bookings_held.append(form)
+            return _json(route, {"redirect": f"/spaces/auth?returnUrl=%2Fseat%2F{form['seat_id']}"})
+        if path == "/spaces/auth":
+            held = self.bookings_held[-1]
+            return self._booking_form(route, held["eid"], pending=held["id"])
         if path == "/ajax/equipment/checkout" and req.method == "POST":
             if self.bookings_checkout_fails:
                 return route.fulfill(status=400, body="That space is no longer available.")
@@ -811,6 +865,22 @@ class FakeUU:
                                      headers={"Content-Type": "text/html", "Set-Cookie": token})
             return _redirect(route, f"{BOOKINGS}/libauth/return", cookie=token)
         route.fulfill(status=404, body="not found")
+
+    def _space(self, seat: str) -> tuple:
+        return next(s for s in self.bookings_free + self.bookings_unlisted if s[1] == seat)
+
+    def _seat_page(self, route, seat: str, day: str) -> None:
+        """A seat's grid for day: half-hour slots from 8:00, free (0) unless someone has them (1)."""
+        if seat not in [s[1] for s in self.bookings_free + self.bookings_unlisted]:
+            return _html(route, "<title>Whoops! - LibCal</title><h1>Whoops!</h1>")
+        slots = [f"{day} {h:02d}:{m:02d}:00" for h in range(8, 23) for m in (0, 30)]
+        return _html(route, SEAT_PAGE.format(name=self._space(seat)[0], seat=seat, slots=json.dumps(
+            [[at, int(f"{seat} {at}" in self.bookings_taken)] for at in slots])))
+
+    def _booking_form(self, route, eid: str, pending: str = "") -> None:
+        return _html(route, BOOKING_FORM.format(
+            eid=eid, pending=f' data-id="{pending}"' if pending else "",
+            hang="true" if self.bookings_checkout_hangs else "false"))
 
     def _bookings_search(self, route, path, query) -> None:
         q = {k: v[0] for k, v in query.items()}
