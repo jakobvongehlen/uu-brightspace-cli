@@ -42,7 +42,8 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   authenticator app, or let the CLI generate codes from your TOTP secret.
 - **One login for every platform** while UU's session lasts: after a Brightspace login,
   Konjoin, edu.nl and SURFfilesender log in without asking for another code. GitLab is the
-  exception: it has its own Solis-id sign-in, without a code.
+  exception: it has its own Solis-id sign-in, without a code. `uu login` logs in to several
+  at once, and `uu save-creds` stores your login details for all of them.
 
 ## Limitations
 
@@ -71,7 +72,7 @@ is the same as `uu brightspace <command>`.
 
 UU asks for your Solis-id, your password and a 6-digit code from your authenticator
 app. The CLI can answer the code step in two ways, or let you log in yourself, chosen
-with `--auth` (or `BRIGHTSPACE_AUTH`). Whichever you pick, the result is one UU session
+with `--auth` (or `UU_AUTH`). Whichever you pick, the result is one UU session
 that Brightspace, Konjoin and Library share. GitLab signs you in on its own page, with
 your Solis-id and password and no code ([GitLab](#gitlab)):
 
@@ -91,17 +92,22 @@ you would anywhere; once you're back on the platform, the CLI takes the session 
 closes the window (it waits up to 5 minutes). It needs a screen: a desktop, or WSLg on
 Windows.
 
-With `prompt`, a login looks like this; the CLI also asks for your Solis-id and
+Every command logs in by itself when it needs to. To get it done ahead of time, name the
+services; with `prompt` it looks like this, and the CLI also asks for your Solis-id and
 password when they aren't set:
 
 ```sh
-uu brightspace login
+uu login brightspace konjoin remindo
 # Code from your authenticator app: 123456
 ```
 
+That's one code: after the first service, the others log in with UU's session. Only
+bookings.uu.nl asks for a code again, and GitLab has a sign-in of its own. `uu <service>
+login` does the same for one service.
+
 After a login the CLI keeps the session cookies in the session directory
 (`cookies.json`, owner-only), so later commands, including `sync`, reuse the login
-until UU or Brightspace ends the session. Only then does it ask for a code again.
+until UU or the service ends the session. Only then does it ask for a code again.
 Those cookies work like a login for as long as the session lasts; delete the file to
 log out.
 
@@ -110,34 +116,41 @@ log out.
 Store your credentials encrypted once:
 
 ```sh
-uu brightspace save-creds
+uu save-creds
 ```
 
 This prompts for your Solis-id, password, TOTP secret and a passphrase, and writes
-them to `credentials.enc` (scrypt + AES-256-GCM, mode `0600`). Leave the TOTP secret
-empty to keep typing codes from your app (`--auth prompt`). Whenever a login is
-needed, the CLI asks for the passphrase. To skip the prompt (cron, Docker), set
-`BRIGHTSPACE_PASSPHRASE`. Keep the passphrase out of files, or the encryption gains
-you nothing.
+them to `credentials.enc` (scrypt + AES-256-GCM, mode `0600`). Every service's login
+uses them. Leave the TOTP secret empty to keep typing codes from your app (`--auth
+prompt`). Whenever a login is needed, the CLI asks for the passphrase. To skip the
+prompt (cron, Docker), set `UU_PASSPHRASE`. Keep the passphrase out of files, or the
+encryption gains you nothing. `uu brightspace save-creds` still works too.
 
 Or pass the credentials as environment variables, which take precedence over the
 saved file:
 
 ```sh
-export BRIGHTSPACE_SOLISID=...
-export BRIGHTSPACE_PASSWORD=...
-export BRIGHTSPACE_TOTP_SECRET=...
+export UU_SOLISID=...
+export UU_PASSWORD=...
+export UU_TOTP_SECRET=...
 ```
 
 Your password and TOTP secret sit together in the same place, so anyone who gets
 both bypasses MFA. Avoid `--password`/`--totp` flags: they show up in `ps` and
 shell history.
 
-Optional: `BRIGHTSPACE_ORG_UNIT` (default course), `BRIGHTSPACE_BASE_URL`,
-`BRIGHTSPACE_SESSION_DIR`, `BRIGHTSPACE_TOKEN_FILE` and `BRIGHTSPACE_CREDS_FILE`
-(default `../brightspace/` next to the repo). The token and session are bearer
-secrets and are kept owner-only. To keep them off disk, point them at a tmpfs such
-as `$XDG_RUNTIME_DIR`.
+The CLI keeps its state (session, Brightspace's token, saved credentials) in one folder:
+`../uu-state/` next to the repo, or `~/.local/share/uu-cli/uu-state/` for an installed
+package. Set `UU_STATE_DIR` to put it elsewhere, or `UU_SESSION_DIR`,
+`UU_BRIGHTSPACE_TOKEN_FILE` and `UU_CREDS_FILE` for one part of it. The token and session
+are bearer secrets and are kept owner-only. To keep them off disk, point them at a tmpfs
+such as `$XDG_RUNTIME_DIR`. Older versions kept the state in `../brightspace/`; the first
+run moves it over.
+
+The variables used to start with `BRIGHTSPACE_` (`BRIGHTSPACE_SOLISID`,
+`BRIGHTSPACE_PASSPHRASE`, `BRIGHTSPACE_BASE_URL`, …) and Konjoin's with `KONJOIN_`. Those
+names still work; the `UU_` name wins when both are set. The full list is in
+[`src/uu_cli/env.py`](src/uu_cli/env.py).
 
 ### Getting your TOTP secret
 
@@ -162,8 +175,8 @@ accounts" QR holds an encoded `otpauth-migration://` URI that needs a decoder to
 ## Usage
 
 ```sh
-uu brightspace save-creds                     # Store credentials encrypted
-uu brightspace login                          # Authenticate and cache a token
+uu save-creds                                 # Store credentials encrypted
+uu login brightspace                          # Log in and cache a token
 uu brightspace courses                        # List enrolled courses
 uu brightspace sync --org-unit <id> -o out    # Download one course
 uu brightspace sync-all -o out                # Download every course
@@ -174,8 +187,8 @@ uu brightspace assignments | grades | news | toc | schedule
 ```
 
 All commands except `login`, `courses` and `sync-all` need a course's org-unit id:
-pass `--org-unit <id>` (find ids with `courses`) or set `BRIGHTSPACE_ORG_UNIT`.
-Run with `--help` for all options.
+pass `--org-unit <id>` (find ids with `courses`) or set `UU_BRIGHTSPACE_ORG_UNIT`.
+Run with `--help` for all options. Optional: `UU_BRIGHTSPACE_URL`.
 
 `sync` and `sync-all` put each course in `<out>/<course name>/`, named as Brightspace names
 the course, with `/` as `_`: `2026-2027 1-GS Data intensive systems (INFOMDIS)/`. A folder
@@ -197,15 +210,15 @@ uu konjoin projects                           # First page of projects (no login
 uu konjoin projects --search neuro --all      # Every project matching "neuro"
 uu konjoin project 3208-some-project-title    # One project's details (logs in if needed)
 uu konjoin export -o projects.json            # Every project, all pages, as JSON
-uu konjoin login                              # Log in ahead of time
+uu login konjoin                              # Log in ahead of time
 ```
 
 Public projects are listed without a login; project details need one. Konjoin logs
 in through SURFconext, which the CLI answers with "Utrecht University", then UU's
-Solis-id page as usual. The login options and variables (`--auth`, `save-creds`,
-`BRIGHTSPACE_SOLISID`, …) are shared with Brightspace, as is the browser session.
+Solis-id page as usual. The login options and variables (`--auth`, `uu save-creds`,
+`UU_SOLISID`, …) are the same for every service, as is the browser session.
 If SURFconext asks for your consent to share your details with Konjoin, log in once
-in a normal browser to give it. Optional: `KONJOIN_BASE_URL`.
+in a normal browser to give it. Optional: `UU_KONJOIN_URL`.
 
 Konjoin shows every logged-in user each person's email address and organisation id.
 JSON output (`--json`, `export`) leaves both out, so an export isn't a list of everyone's
@@ -292,7 +305,7 @@ fetch only the articles you name, `open` and `get` one per run in a window you s
 ### GitLab
 
 ```sh
-uu gitlab login                               # Log in with your Solis-id and password
+uu login gitlab                               # Log in with your Solis-id and password
 uu gitlab projects                            # Your projects, with their SSH addresses
 uu gitlab create thesis                       # An empty private project, for an existing repo
 uu gitlab add-key                             # Add ~/.ssh/id_ed25519.pub to your account
@@ -302,7 +315,7 @@ This is the Faculty of Science's GitLab at `git.science.uu.nl`, primarily for th
 faculty's staff and students; others need a guest account, which a staff member requests.
 It doesn't use UU's login page: its own sign-in has a Solis-ID tab that checks your
 Solis-id and password, without a code from your authenticator app. So a login to another
-service doesn't carry over, and `save-creds` without a TOTP secret is enough.
+service doesn't carry over, and `uu save-creds` without a TOTP secret is enough.
 `--auth browser` opens that sign-in page in a window instead; you need it when you've
 turned on GitLab's own two-factor login.
 
@@ -318,7 +331,7 @@ uu edunl shorten https://git.science.uu.nl/you/thesis     # Prints the short lin
 uu edunl shorten https://example.org/form --label survey  # With a label only you see
 uu edunl links                                            # Your links, newest first
 uu edunl links --search survey --json
-uu edunl login                                            # Log in ahead of time
+uu login edunl                                            # Log in ahead of time
 ```
 
 [edu.nl](https://edu.nl/about) is SURF's URL shortener, free for students and staff of
@@ -337,7 +350,7 @@ site; questions go to kort@surf.nl. edu.nl publishes no terms of use beyond thos
 ### SURFfilesender
 
 ```sh
-uu filesender login                                         # Log in ahead of time
+uu login filesender                                         # Log in ahead of time
 uu filesender send notes.zip --to name@uu.nl --accept-terms
 uu filesender send a.pdf b.pdf --to x@uu.nl,y@uu.nl --days 7 --encrypt --accept-terms
 uu filesender transfers                                     # Yours that haven't expired
@@ -469,28 +482,32 @@ either value will do. `--year` picks another academic year (default: the one the
 ```sh
 docker build -t brightspace-cli .
 docker run --rm \
-  -e BRIGHTSPACE_SOLISID -e BRIGHTSPACE_PASSWORD -e BRIGHTSPACE_TOTP_SECRET \
-  -e BRIGHTSPACE_SESSION_DIR=/data/session -e BRIGHTSPACE_TOKEN_FILE=/data/token.json \
+  -e UU_SOLISID -e UU_PASSWORD -e UU_TOTP_SECRET \
   -v brightspace-state:/data -v "$PWD/output:/output" \
   brightspace-cli sync-all -o /output
 ```
 
-To use saved credentials instead, run `save-creds` once with `-it` against the same
-volume. It writes `/data/credentials.enc`. From then on, pass `-e BRIGHTSPACE_PASSPHRASE`
-(or use `-it` and type it) instead of the three credential variables.
+The image keeps its state in `/data` (`UU_STATE_DIR`). To use saved credentials instead,
+run `save-creds` once with `-it` against the same volume. It writes `/data/credentials.enc`.
+From then on, pass `-e UU_PASSPHRASE` (or use `-it` and type it) instead of the three
+credential variables.
 
 ## Development
 
 ```
 src/uu_cli/
-  cli.py               the `uu` command: uu <service> <command>
+  cli.py               the `uu` command: uu <service> <command>, uu login, uu save-creds
   browser.py           the headless Chromium every command runs in, and --auth browser's window
   login.py             UU's Solis-id page: filled in here (do_login) or by you in a window
-                       (browser_login); log_in picks one from --auth
+                       (browser_login); log_in picks one from --auth. A service is a Site
+                       (its login page, and how to tell you're in) for ensure_login
   paths.py             where state and downloads live
+  env.py               the UU_* variables, and their old names
   auth/                login routes for the code step (totp_secret.py, prompt.py) and
                        the encrypted credentials file
   services/
+    common.py          what every service's cli.py shares: the login options on its command
+                       line, and the browser a command runs in
     brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py,
                        discussions.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
@@ -502,7 +519,7 @@ src/uu_cli/
                        commands.py (its own Solis-ID sign-in), cli.py
     konjoin/           api.py (/api/project), commands.py, cli.py
     osiris/            api.py (the course catalogue's search and course pages, no login),
-                       commands.py, cli.py
+                       commands.py, student.py (your own Osiris Student, logged in), cli.py
     library/           proxy.py (the proxy, in a window), elsevier.py (the API),
                        articles.py (DOIs, saved PDFs), cli.py
 brightspace-cli.py     the old entry point, kept for existing scripts and the Docker image
@@ -512,7 +529,10 @@ tests/                 pytest suite; fake_uu.py is an offline stand-in for UU's 
 ```
 
 A new platform is a package under `services/` with a `cli.py` exposing `main(argv, prog)`,
-registered in `SERVICES` in `cli.py`. A new login route is a module in `auth/` with a
+registered in `SERVICES` in `cli.py`. Its parser comes from `common.command_line`, and its
+commands run in `common.run`. If it has a login, it describes itself as a `Site`, calls
+`ensure_login` where it needs one, and its `cli.py` exposes `login(ctx, args)` and
+`OWN_FILES` for `uu login`. A new login route is a module in `auth/` with a
 class that has a `name` and a `code()` method, registered in `ROUTES` in
 `auth/__init__.py`.
 

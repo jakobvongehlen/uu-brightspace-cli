@@ -32,7 +32,7 @@ SIGN_IN_TIMEOUT_S = 30
 # How long the --auth browser window waits for you to finish logging in.
 WINDOW_TIMEOUT_S = 300
 
-CANNOT_LOGIN = ("GitLab's sign-in needs your Solis-id and password (save-creds, --password or a "
+CANNOT_LOGIN = ("GitLab's sign-in needs your Solis-id and password (`uu save-creds`, --password or a "
                 "terminal to type them in), or a screen for --auth browser")
 
 # The public key types GitLab takes; each line of a .pub file starts with one.

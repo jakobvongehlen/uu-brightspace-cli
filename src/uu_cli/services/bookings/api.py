@@ -402,7 +402,7 @@ def cancel(ctx: BrowserContext, code: str, booking_id: str | None = None) -> lis
 
 
 def bookings_file():
-    return paths.TOKEN_FILE.parent / "bookings.json"
+    return paths.STATE_DIR / "bookings.json"
 
 
 def saved_bookings() -> list[dict]:

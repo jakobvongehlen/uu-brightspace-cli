@@ -10,27 +10,18 @@ from pathlib import Path
 from playwright.sync_api import BrowserContext
 
 from uu_cli import paths
-from uu_cli.login import log_in
 from uu_cli.paths import safe_filename
-from uu_cli.services.brightspace.api import (
-    BASE_URL, api_fetch, extract_token, get_token, save_token,
-)
+from uu_cli.services.brightspace.api import BASE_URL, api_fetch, get_token
 from uu_cli.services.brightspace.sheets import (
     download_google_sheet, extract_google_sheets_urls, parse_sheet_deadlines,
 )
 
 
 def cmd_login(ctx: BrowserContext, args) -> int:
-    token = extract_token(ctx)
-    if not token:
-        log_in(ctx, BASE_URL, args)
-        page = ctx.pages[0]
-        page.goto(f"{BASE_URL}/d2l/home", wait_until="load", timeout=15000)
-        page.wait_for_timeout(2000)
-        token = extract_token(ctx)
-    if token:
-        save_token(token)
-        print("Token cached.", file=sys.stderr)
+    """Log in, unless the saved session still is, and cache a new token."""
+    if not get_token(ctx, args, session=True):
+        return 1
+    print("Logged in to Brightspace. Token cached.", file=sys.stderr)
     return 0
 
 

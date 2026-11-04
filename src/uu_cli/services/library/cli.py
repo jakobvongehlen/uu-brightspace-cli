@@ -8,9 +8,8 @@ import sys
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-from uu_cli import auth, browser, paths
+from uu_cli import auth, paths
+from uu_cli.services import common
 from uu_cli.services.library import articles, elsevier, proxy
 
 # Between two articles from Elsevier's API: one researcher's pace, not a crawler's.
@@ -175,12 +174,8 @@ def _has_screen(cmd: str) -> bool:
 
 def _in_window(url: str, doi: str | None, out: Path, session_dir: str, fetch: bool,
                keep_open: bool = False) -> tuple[list[Path], list[Path]]:
-    with sync_playwright() as pw:
-        ctx = browser.launch(pw, session_dir)
-        try:
-            return proxy.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch)
-        finally:
-            browser.save_session(ctx, session_dir)
+    with common.browser_for(session_dir) as ctx:
+        return proxy.open_article(ctx, url, out, doi, keep_open=keep_open, fetch=fetch)
 
 
 def cmd_elsevier(args) -> int:
@@ -229,7 +224,6 @@ def _window_args(sp: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None, prog: str | None = None) -> None:
-    paths.ensure_state_dirs()
     p = argparse.ArgumentParser(
         prog=prog, description="Articles from journals UU subscribes to, through UU's library")
     sub = p.add_subparsers(dest="cmd", required=True)

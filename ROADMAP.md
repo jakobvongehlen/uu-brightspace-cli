@@ -32,7 +32,7 @@ used at UU, and how it can be reached, before building on it.
 
 ## Underneath it all
 
-- [ ] **`UU_*` environment variables**, with the `BRIGHTSPACE_*` names kept as aliases,
+- [x] **`UU_*` environment variables**, with the `BRIGHTSPACE_*` names kept as aliases,
   now that the login is shared by every platform.
 - [ ] **Rename the repo to `uu-cli`**, matching the package and the `uu` command.
 - [ ] **Run the offline tests on GitHub Actions** for every pull request.

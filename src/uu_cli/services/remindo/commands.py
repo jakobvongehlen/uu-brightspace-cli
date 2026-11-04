@@ -11,8 +11,8 @@ from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError
 
-from uu_cli import auth, paths
-from uu_cli.login import log_in, single_sign_on
+from uu_cli import login, paths
+from uu_cli.login import Site, ensure_login
 from uu_cli.services.remindo import api
 from uu_cli.services.remindo.api import SSO_URL, NotLoggedIn, RemindoError, logged_in
 
@@ -21,19 +21,7 @@ STATUS = {"correct": "correct", "mostly-correct": "mostly correct", "mostly-inco
           "incorrect": "incorrect", "unanswered": "unanswered", "review": "to be reviewed"}
 
 
-def ensure_login(ctx: BrowserContext, args) -> bool:
-    """Log in to Remindo unless already in; an existing UU session may need no code."""
-    if logged_in(ctx):
-        return True
-    print("[AUTH] Logging in to Remindo...", file=sys.stderr)
-    if single_sign_on(ctx, SSO_URL) and logged_in(ctx):
-        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return True
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return False
-    log_in(ctx, SSO_URL, args, name="Remindo")
-    return logged_in(ctx)
+SITE = Site("Remindo", SSO_URL, logged_in)
 
 
 def _logged_in_call(ctx: BrowserContext, args, fn, *a):
@@ -41,16 +29,13 @@ def _logged_in_call(ctx: BrowserContext, args, fn, *a):
     try:
         return fn(ctx, *a)
     except NotLoggedIn:
-        if not ensure_login(ctx, args):
+        if not ensure_login(ctx, args, SITE):
             return None
         return fn(ctx, *a)
 
 
 def cmd_login(ctx: BrowserContext, args) -> int:
-    if not ensure_login(ctx, args):
-        return 1
-    print("Logged in to Remindo.", file=sys.stderr)
-    return 0
+    return login.cmd_login(ctx, args, SITE)
 
 
 def cmd_agenda(ctx: BrowserContext, args) -> int:
@@ -94,7 +79,7 @@ def _all_results(ctx: BrowserContext, args, tabs) -> dict | None:
 
 def _seen_file() -> Path:
     """What `results --new` saw last time: next to the session, as the other state."""
-    return paths.SESSION_DIR.parent / "remindo-seen.json"
+    return paths.STATE_DIR / "remindo-seen.json"
 
 
 def _new_results(found: dict) -> list[dict] | None:

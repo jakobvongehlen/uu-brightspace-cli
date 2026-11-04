@@ -10,8 +10,8 @@ from pathlib import Path
 
 from playwright.sync_api import BrowserContext
 
-from uu_cli import auth
-from uu_cli.login import log_in, single_sign_on
+from uu_cli import login
+from uu_cli.login import Site, ensure_login
 from uu_cli.services.konjoin.api import (
     BASE_URL, LOGIN_URL, NotLoggedIn, current_user, get_json, project_pages,
 )
@@ -35,26 +35,11 @@ def _for_output(data, args):
     return data if getattr(args, "keep_contact_details", False) else without_contact_details(data)
 
 
-def ensure_login(ctx: BrowserContext, args) -> bool:
-    """Log in to Konjoin unless already in; an existing UU session needs no code."""
-    if current_user(ctx):
-        return True
-    print("[AUTH] Logging in to Konjoin...", file=sys.stderr)
-    if single_sign_on(ctx, LOGIN_URL) and current_user(ctx):
-        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return True
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return False
-    log_in(ctx, LOGIN_URL, args, name="Konjoin")
-    return bool(current_user(ctx))
+SITE = Site("Konjoin", LOGIN_URL, current_user)
 
 
 def cmd_login(ctx: BrowserContext, args) -> int:
-    if not ensure_login(ctx, args):
-        return 1
-    print(f"Logged in to Konjoin as {current_user(ctx)}.", file=sys.stderr)
-    return 0
+    return login.cmd_login(ctx, args, SITE)
 
 
 def cmd_projects(ctx: BrowserContext, args) -> int:
@@ -84,7 +69,7 @@ def cmd_project(ctx: BrowserContext, args) -> int:
     try:
         project = get_json(ctx, f"/api/project/{args.slug}")
     except NotLoggedIn:
-        if not ensure_login(ctx, args):
+        if not ensure_login(ctx, args, SITE):
             return 1
         project = get_json(ctx, f"/api/project/{args.slug}")
     if args.json:

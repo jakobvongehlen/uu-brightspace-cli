@@ -10,10 +10,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.sync_api import BrowserContext, Error as PlaywrightError, sync_playwright
+from playwright.sync_api import BrowserContext, Error as PlaywrightError
 
-from uu_cli import auth, browser
-from uu_cli.login import log_in, single_sign_on
+from uu_cli import auth, login
+from uu_cli.login import Site, ensure_login
+from uu_cli.services import common
 from uu_cli.services.filesender import api
 
 CODE_OF_CONDUCT = ("https://servicedesk.surf.nl/wiki/spaces/WIKI/pages/198967771/"
@@ -76,43 +77,18 @@ def session_from_page(ctx: BrowserContext) -> api.Session | None:
     return session
 
 
-def open_session(ctx: BrowserContext, args) -> api.Session | None:
-    """Log in unless already in (an existing UU session needs no code); the session for the API."""
-    session = session_from_page(ctx)
-    if session:
-        return session
-    print("[AUTH] Logging in to SURFfilesender...", file=sys.stderr)
-    if single_sign_on(ctx, api.LOGIN) and (session := session_from_page(ctx)):
-        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return session
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return None
-    log_in(ctx, api.LOGIN, args, name="SURFfilesender")
-    session = session_from_page(ctx)
-    if not session:
-        print("ERROR: Logged in, but SURFfilesender still doesn't see a session.", file=sys.stderr)
-    return session
+SITE = Site("SURFfilesender", api.LOGIN, session_from_page)
 
 
 @contextmanager
 def connected(args):
     """A browser on SURFfilesender for the length of a command: yields its session, or None."""
-    with sync_playwright() as pw:
-        ctx = browser.launch(pw, args.session_dir)
-        browser.own_files_only(ctx, urlparse(api.BASE_URL).hostname)
-        try:
-            yield open_session(ctx, args)
-        finally:
-            browser.save_session(ctx, args.session_dir)
+    with common.browser_for(args.session_dir, own_files=urlparse(api.BASE_URL).hostname) as ctx:
+        yield ensure_login(ctx, args, SITE)
 
 
-def cmd_login(args) -> int:
-    with connected(args) as session:
-        if not session:
-            return 1
-    print("Logged in to SURFfilesender.", file=sys.stderr)
-    return 0
+def cmd_login(ctx: BrowserContext, args) -> int:
+    return login.cmd_login(ctx, args, SITE)
 
 
 # ── send and list ──────────────────────────────────────────────────────────────

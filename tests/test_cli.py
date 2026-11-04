@@ -15,10 +15,8 @@ BRIGHTSPACE_COMMANDS = ["save-creds", "login", "courses", "toc", "assignments", 
 
 
 def cli(*args: str, state: Path) -> subprocess.CompletedProcess:
-    env = {**os.environ,
-           "BRIGHTSPACE_SESSION_DIR": str(state / "session"),
-           "BRIGHTSPACE_TOKEN_FILE": str(state / "token.json")}
-    env.pop("BRIGHTSPACE_ORG_UNIT", None)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("UU_", "BRIGHTSPACE_"))}
+    env["UU_STATE_DIR"] = str(state)
     return subprocess.run([sys.executable, *args], cwd=REPO, env=env,
                           capture_output=True, text=True, timeout=60)
 
@@ -67,7 +65,7 @@ def test_content_commands_need_an_org_unit(state):
     result = cli("-m", "uu_cli", "brightspace", "toc", state=state)
 
     assert result.returncode == 2
-    assert "--org-unit or BRIGHTSPACE_ORG_UNIT required" in result.stderr
+    assert "--org-unit or UU_BRIGHTSPACE_ORG_UNIT required" in result.stderr
 
 
 def test_totp_flag_rejects_a_six_digit_code(state):

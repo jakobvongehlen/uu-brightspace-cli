@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html as html_lib
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -13,12 +12,9 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from playwright.sync_api import BrowserContext, Page
 
-from uu_cli import auth, paths
-from uu_cli.login import log_in
+from uu_cli import paths
 from uu_cli.paths import safe_filename
-from uu_cli.services.brightspace.api import (
-    BASE_URL, api_fetch, extract_token, get_token, load_token, save_token, token_expired,
-)
+from uu_cli.services.brightspace.api import BASE_URL, api_fetch, get_token
 from uu_cli.services.brightspace.discussions import save_discussions
 from uu_cli.services.brightspace.sheets import download_google_sheet, extract_google_sheets_urls
 
@@ -133,54 +129,11 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
 def _sync_course(ctx: BrowserContext, args, ou: str, output: Optional[str],
                  name: Optional[str] = None) -> tuple[int, int, int]:
     """Download ALL course content files to <output>/<course name>/ (name looked up when not given)."""
-    # Fill gaps only: a password typed at the prompt route must survive the next course.
-    args.password = args.password or os.environ.get("BRIGHTSPACE_PASSWORD", "")
-    args.totp     = args.totp     or os.environ.get("BRIGHTSPACE_TOTP_SECRET", "")
-
-    # ── Establish an authenticated page context first ──────────────────────
-    # A cached bearer token authenticates /d2l/api/* but NOT /content/enforced/*
-    # content pages, which need SAML session cookies in this browser process.
-    # Chrome does not persist those session cookies to the profile dir, so an
-    # offline cached token alone yields "auth redirect" on every content page and
-    # a metadata-only sync. Always probe the live page context first.
-    token = ""
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    session_ok = False
-    try:
-        page.goto(f"{BASE_URL}/d2l/home", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(2000)
-        if urlparse(page.url).hostname == urlparse(BASE_URL).hostname:
-            session_ok = True
-    except Exception:
-        pass
-
-    cached = load_token()
-    if session_ok:
-        fresh_token = extract_token(ctx)
-        if fresh_token:
-            save_token(fresh_token)
-        token = fresh_token or (cached or {}).get("token", "")
-        if token and token_expired(token):
-            token = ""
-        if token:
-            print("[SYNC] Reusing authenticated browser session.", file=sys.stderr)
-
+    # A cached token authenticates /d2l/api/* but not the /content/enforced/* content pages,
+    # which need the browser's session: without it, every page is an "auth redirect".
+    token = get_token(ctx, args, session=True)
     if not token:
-        if not auth.ready_to_login(args):
-            print(f"ERROR: No authenticated session; {auth.CANNOT_LOGIN}.", file=sys.stderr)
-            return 1, 0, 0
-        print("[SYNC] Session expired — fresh login...", file=sys.stderr)
-        log_in(ctx, BASE_URL, args)
-        # Do not re-navigate — log_in already lands on /d2l/home
-        page.wait_for_timeout(2000)
-
-        fresh_token = extract_token(ctx)
-        if fresh_token:
-            save_token(fresh_token)
-        token = fresh_token or (load_token() or {}).get("token", "")
-        if not token:
-            print("[SYNC] Token extraction failed.", file=sys.stderr)
-            return 1, 0, 0
+        return 1, 0, 0
     print(f"[SYNC] Session ready.", file=sys.stderr)
 
     base_dir = Path(output or

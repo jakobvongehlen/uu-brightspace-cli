@@ -79,7 +79,7 @@ def test_prompt_asks_again_until_it_gets_six_digits(monkeypatch, capsys):
 
 
 def test_save_creds_without_a_secret_leads_to_the_prompt_route(monkeypatch):
-    monkeypatch.setenv("BRIGHTSPACE_PASSPHRASE", "long enough passphrase")
+    monkeypatch.setenv("UU_PASSPHRASE", "long enough passphrase")
     monkeypatch.setattr("getpass.getpass", lambda prompt="": "")  # Enter at "TOTP secret"
     assert credentials.cmd_save_creds(Namespace(solisid=SOLISID, password=PASSWORD, totp="")) == 0
     monkeypatch.setattr(auth, "interactive", lambda: True)
@@ -119,7 +119,7 @@ def test_one_code_then_sync_without_logging_in(fake_uu, at_terminal, monkeypatch
     code, _, err = run(["sync", "--org-unit", ORG_UNIT, "-o", str(state / "mirror")], capsys)
 
     assert code == 0, err
-    assert "Reusing authenticated browser session." in err
+    assert "Token refreshed from the saved session." in err
     assert (state / "mirror" / COURSE_NAME / "Week 1" / "Slides.pdf").read_bytes() == PDF
     assert fake_uu.logins == 1 and len(fake_uu.codes) == 1
 

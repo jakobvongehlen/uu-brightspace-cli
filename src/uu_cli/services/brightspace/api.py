@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import sys
 import time
 from typing import Any, Optional
@@ -12,9 +11,10 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext
 
-from uu_cli import paths
+from uu_cli import auth, env, paths
+from uu_cli.login import log_in
 
-BASE_URL  = os.environ.get("BRIGHTSPACE_BASE_URL", "https://uu.brightspace.com").rstrip("/")
+BASE_URL  = env.get("UU_BRIGHTSPACE_URL", "https://uu.brightspace.com").rstrip("/")
 
 
 def load_token() -> dict | None:
@@ -34,8 +34,8 @@ def save_token(token: str) -> None:
     }))
 
 
-EXPIRED_MSG = ("ERROR: Brightspace token expired. "
-               "Run 'brightspace-cli.py login' to get a new one.")
+EXPIRED_MSG = ("ERROR: Brightspace no longer takes the token. "
+               "Run `uu login brightspace` to get a new one.")
 
 
 def token_expired(token: str, margin: int = 60) -> bool:
@@ -81,23 +81,6 @@ def _extract_token(ctx: BrowserContext) -> str | None:
     return None
 
 
-def refresh_token(ctx: BrowserContext) -> str | None:
-    """Get a fresh token from a still-valid browser session (restored cookies), without a login."""
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    try:
-        page.goto(f"{BASE_URL}/d2l/home", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(2000)
-    except Exception:
-        return None
-    if urlparse(page.url).hostname != urlparse(BASE_URL).hostname:
-        return None
-    token = extract_token(ctx)
-    if token:
-        save_token(token)
-        print("[MAIN] Token refreshed from the saved session.", file=sys.stderr)
-    return token
-
-
 def api_fetch(ctx: BrowserContext, url: str, token: str,
               timeout: float = 20000) -> Optional[Any]:
     """GET a Brightspace /d2l/api/ endpoint via Playwright page JS (carries cookies)."""
@@ -128,11 +111,46 @@ def api_fetch(ctx: BrowserContext, url: str, token: str,
     return data
 
 
-def get_token(ctx: BrowserContext, args) -> Optional[str]:
-    token = (args.token
-             or extract_token(ctx)
-             or (load_token() or {}).get("token"))
-    if not token:
-        print("No token. Run 'brightspace-cli.py login' first.", file=sys.stderr)
+def get_token(ctx: BrowserContext, args, session: bool = False) -> str | None:
+    """A live bearer token for /d2l/api/, logging in when there is none; None after saying why not.
+
+    In order: --token, the cached token, a new one from the saved browser session, one from a
+    new login. session: make sure this browser is logged in too, as content pages
+    (/content/enforced/*) need the session's cookies and don't take the token (sync).
+    """
+    if not session and args.token:
+        return args.token
+    cached = (load_token() or {}).get("token")
+    expired = bool(cached) and token_expired(cached)
+    if cached and not expired and not session:
+        return cached
+    if _at_home(ctx):  # the saved session still works: it gives a new token without a login
+        token = extract_token(ctx)
+        if token:
+            save_token(token)
+            print("[AUTH] Token refreshed from the saved session.", file=sys.stderr)
+            return token
+        if cached and not expired:
+            return cached
+    if not auth.ready_to_login(args):
+        why = "The Brightspace token expired" if expired else "No Brightspace session"
+        print(f"ERROR: {why}, and {auth.CANNOT_LOGIN}.", file=sys.stderr)
         return None
+    log_in(ctx, BASE_URL, args)
+    token = extract_token(ctx) if _at_home(ctx) else None
+    if not token:
+        print("ERROR: Logged in, but Brightspace gave no token.", file=sys.stderr)
+        return None
+    save_token(token)
     return token
+
+
+def _at_home(ctx: BrowserContext) -> bool:
+    """Open Brightspace's home page; False when it sends you to log in instead."""
+    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    try:
+        page.goto(f"{BASE_URL}/d2l/home", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
+    except Exception:
+        return False
+    return urlparse(page.url).hostname == urlparse(BASE_URL).hostname

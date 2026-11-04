@@ -6,23 +6,15 @@ osiris-link.nl) to UU's Solis-id page, with a code, and back.
 
 from __future__ import annotations
 
-import sys
-
 from playwright.sync_api import BrowserContext
 
-from uu_cli import auth
-from uu_cli.login import log_in, single_sign_on
+from uu_cli import login
+from uu_cli.login import Site
 from uu_cli.services.osiris.api import BASE_URL
 
-START_URL = f"{BASE_URL}/"
+# No way to tell yet whether you're logged in: a login that ends back on Osiris counts.
+SITE = Site("Osiris", f"{BASE_URL}/")
 
 
-def ensure_login(ctx: BrowserContext, args) -> bool:
-    """Log in to Osiris Student unless already in; an existing UU session may need no code."""
-    if single_sign_on(ctx, START_URL):
-        return True
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return False
-    log_in(ctx, START_URL, args, name="Osiris")
-    return True
+def cmd_login(ctx: BrowserContext, args) -> int:
+    return login.cmd_login(ctx, args, SITE)

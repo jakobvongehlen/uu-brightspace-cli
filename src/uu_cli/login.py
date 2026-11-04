@@ -5,7 +5,8 @@ through SURFconext, which may first ask which institution to use. One UU login a
 the next service while UU's session lasts (single sign-on).
 
 The CLI fills the form itself (do_login), or, with --auth browser, opens a browser window
-where you log in yourself (browser_login).
+where you log in yourself (browser_login). A service describes itself as a Site, and
+ensure_login logs in to it when it has to.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from __future__ import annotations
 import re
 import sys
 import time
+from dataclasses import dataclass
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page
@@ -28,6 +31,55 @@ UU_CODE_FIELD = "#nffc"
 
 # How long the --auth browser window waits for you to finish logging in.
 WINDOW_TIMEOUT_S = 300
+
+
+@dataclass(frozen=True)
+class Site:
+    """A service behind UU's login, as ensure_login needs it."""
+    name: str
+    login_url: str  # opening it leads to UU's Solis-id page, through SURFconext or not
+    # Returns something true while you're logged in (your name, a session), something false
+    # otherwise. None: no way to tell, so a login that ends back on the service counts.
+    logged_in: Callable[[BrowserContext], Any] | None = None
+
+
+def ensure_login(ctx: BrowserContext, args, site: Site) -> Any:
+    """Log in to site unless already in; what site.logged_in returned, or None after saying why not."""
+    if site.logged_in and (found := site.logged_in(ctx)):
+        return found
+    return login_to(ctx, args, site)
+
+
+def login_to(ctx: BrowserContext, args, site: Site) -> Any:
+    """Log in to site: without a code while UU's session lasts, else the way args.auth says.
+
+    Returns what site.logged_in returns afterwards (True without it), or None after saying why
+    there's no login.
+    """
+    check = site.logged_in or (lambda ctx: True)
+    print(f"[AUTH] Logging in to {site.name}...", file=sys.stderr)
+    if single_sign_on(ctx, site.login_url) and (found := check(ctx)):
+        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
+        return found
+    if not auth.ready_to_login(args):
+        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
+        return None
+    log_in(ctx, site.login_url, args, name=site.name)
+    found = check(ctx)
+    if not found:
+        print(f"ERROR: The login went through, but {site.name} doesn't see you logged in.",
+              file=sys.stderr)
+    return found or None
+
+
+def cmd_login(ctx: BrowserContext, args, site: Site) -> int:
+    """`uu login <service>`: log in to site now (every command also logs in when it needs to)."""
+    found = ensure_login(ctx, args, site)
+    if not found:
+        return 1
+    who = f" as {found}" if isinstance(found, str) else ""
+    print(f"Logged in to {site.name}{who}.", file=sys.stderr)
+    return 0
 
 
 def log_in(ctx: BrowserContext, start_url: str, args, name: str = "Brightspace") -> None:
@@ -52,7 +104,7 @@ def do_login(ctx: BrowserContext, start_url: str, solisid: str, password: str,
     The one-time code comes from otp (see uu_cli.auth), asked for once the code form is up.
     """
     if not solisid:
-        print("ERROR: --solisid or BRIGHTSPACE_SOLISID required for login",
+        print("ERROR: --solisid or UU_SOLISID required for login",
               file=sys.stderr)
         sys.exit(1)
 

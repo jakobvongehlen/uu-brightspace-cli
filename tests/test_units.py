@@ -40,7 +40,7 @@ CREDS = {"solisid": SOLISID, "password": PASSWORD, "totp": TOTP_SECRET}
 
 
 def test_credentials_round_trip(monkeypatch):
-    monkeypatch.setenv("BRIGHTSPACE_PASSPHRASE", "long enough passphrase")
+    monkeypatch.setenv("UU_PASSPHRASE", "long enough passphrase")
     credentials.save_creds(CREDS, "long enough passphrase")
 
     assert credentials.load_creds() == CREDS
@@ -50,14 +50,14 @@ def test_credentials_round_trip(monkeypatch):
 
 def test_wrong_passphrase_exits(monkeypatch):
     credentials.save_creds(CREDS, "long enough passphrase")
-    monkeypatch.setenv("BRIGHTSPACE_PASSPHRASE", "something else entirely")
+    monkeypatch.setenv("UU_PASSPHRASE", "something else entirely")
 
     with pytest.raises(SystemExit, match="wrong passphrase"):
         credentials.load_creds()
 
 
 def test_have_creds_fills_only_missing_fields(monkeypatch):
-    monkeypatch.setenv("BRIGHTSPACE_PASSPHRASE", "long enough passphrase")
+    monkeypatch.setenv("UU_PASSPHRASE", "long enough passphrase")
     credentials.save_creds(CREDS, "long enough passphrase")
     args = Namespace(solisid="7654321", password="", totp="")
 

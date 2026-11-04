@@ -7,11 +7,10 @@ from pathlib import Path
 import pytest
 
 from fake_uu import FakeUU
-from uu_cli import auth, paths
+from uu_cli import auth, env, paths
 
 LOGIN_ENV = [
-    "BRIGHTSPACE_SOLISID", "BRIGHTSPACE_PASSWORD", "BRIGHTSPACE_TOTP_SECRET",
-    "BRIGHTSPACE_PASSPHRASE", "BRIGHTSPACE_ORG_UNIT", "BRIGHTSPACE_AUTH",
+    *env.OLD_NAMES, *env.OLD_NAMES.values(),
     "ELSEVIER_API_KEY", "ELSEVIER_INSTTOKEN",
     "UU_FILESENDER_PASSWORD",
 ]
@@ -23,6 +22,9 @@ def state(tmp_path, monkeypatch) -> Path:
     for var in LOGIN_ENV:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(auth, "interactive", lambda: False)
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(paths, "OLD_STATE_DIR", tmp_path / "brightspace")
+    monkeypatch.setattr(paths, "DEFAULT_STATE_DIR", tmp_path / "uu-state")
     monkeypatch.setattr(paths, "SESSION_DIR", tmp_path / "session")
     monkeypatch.setattr(paths, "TOKEN_FILE", tmp_path / "token.json")
     monkeypatch.setattr(paths, "CREDS_FILE", tmp_path / "credentials.enc")

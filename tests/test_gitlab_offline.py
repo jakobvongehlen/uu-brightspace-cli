@@ -24,8 +24,8 @@ def run(main, argv, capsys):
 @pytest.fixture
 def creds(monkeypatch):
     """Your Solis-id and password in the environment, as save-creds or the variables give them."""
-    monkeypatch.setenv("BRIGHTSPACE_SOLISID", SOLISID)
-    monkeypatch.setenv("BRIGHTSPACE_PASSWORD", PASSWORD)
+    monkeypatch.setenv("UU_SOLISID", SOLISID)
+    monkeypatch.setenv("UU_PASSWORD", PASSWORD)
 
 
 # ── reading your public key ───────────────────────────────────────────────────
@@ -87,7 +87,7 @@ def test_login_asks_only_for_solis_id_and_password_at_the_terminal(fake_uu, monk
 
 @pytest.mark.browser
 def test_a_wrong_password_says_what_gitlab_said(fake_uu, creds, monkeypatch, capsys):
-    monkeypatch.setenv("BRIGHTSPACE_PASSWORD", "wrong")
+    monkeypatch.setenv("UU_PASSWORD", "wrong")
 
     code, _, err = run(gitlab, ["login"], capsys)
 
@@ -139,7 +139,7 @@ def test_window_gives_up_and_closes_when_nobody_logs_in(window, fake_uu, monkeyp
 @pytest.mark.browser
 def test_the_session_is_kept_for_the_next_run(fake_uu, creds, monkeypatch, capsys):
     run(gitlab, ["login"], capsys)
-    monkeypatch.delenv("BRIGHTSPACE_PASSWORD")
+    monkeypatch.delenv("UU_PASSWORD")
 
     code, out, err = run(gitlab, ["projects"], capsys)
 

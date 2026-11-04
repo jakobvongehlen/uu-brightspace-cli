@@ -7,31 +7,15 @@ import sys
 
 from playwright.sync_api import BrowserContext
 
-from uu_cli import auth
-from uu_cli.login import log_in, single_sign_on
+from uu_cli import login
+from uu_cli.login import Site, ensure_login
 from uu_cli.services.edunl.api import MANAGE_URL, EdunlError, NotLoggedIn, links, logged_in, set_label, shorten
 
-
-def ensure_login(ctx: BrowserContext, args) -> bool:
-    """Log in to edu.nl unless already in; an existing UU session needs no code."""
-    if logged_in(ctx):
-        return True
-    print("[AUTH] Logging in to edu.nl...", file=sys.stderr)
-    if single_sign_on(ctx, MANAGE_URL) and logged_in(ctx):
-        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return True
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return False
-    log_in(ctx, MANAGE_URL, args, name="edu.nl")
-    return logged_in(ctx)
+SITE = Site("edu.nl", MANAGE_URL, logged_in)
 
 
 def cmd_login(ctx: BrowserContext, args) -> int:
-    if not ensure_login(ctx, args):
-        return 1
-    print("Logged in to edu.nl.", file=sys.stderr)
-    return 0
+    return login.cmd_login(ctx, args, SITE)
 
 
 def cmd_shorten(ctx: BrowserContext, args) -> int:
@@ -40,7 +24,7 @@ def cmd_shorten(ctx: BrowserContext, args) -> int:
         print(f"ERROR: Not a web address: {args.url} (it starts with http:// or https://).",
               file=sys.stderr)
         return 2
-    if not ensure_login(ctx, args):
+    if not ensure_login(ctx, args, SITE):
         return 1
     try:
         short, page = shorten(ctx, args.url)
@@ -59,7 +43,7 @@ def cmd_links(ctx: BrowserContext, args) -> int:
     try:
         rows, more = links(ctx, args.page, args.search)
     except NotLoggedIn:
-        if not ensure_login(ctx, args):
+        if not ensure_login(ctx, args, SITE):
             return 1
         rows, more = links(ctx, args.page, args.search)
     if args.json:

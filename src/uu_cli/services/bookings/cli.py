@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 
-from playwright.sync_api import sync_playwright
-
-from uu_cli import auth, browser, paths
+from uu_cli.services import common
 from uu_cli.services.bookings import api
 from uu_cli.services.bookings.commands import (cmd_book, cmd_cancel, cmd_list, cmd_login,
                                                cmd_options, cmd_places, cmd_search, cmd_show)
@@ -21,26 +18,13 @@ COMMANDS = {
     "cancel": cmd_cancel,
 }
 
+login = cmd_login
+OWN_FILES = None
+
 
 def main(argv: list[str] | None = None, prog: str | None = None) -> None:
-    paths.ensure_state_dirs()
-
-    def add_global_args(parser, suppress=False):
-        # Subparsers use SUPPRESS so they don't overwrite values given before the subcommand
-        d = (lambda v: argparse.SUPPRESS) if suppress else (lambda v: v)
-        parser.add_argument("--session-dir", default=d(str(paths.SESSION_DIR)),
-                            help="Browser profile, shared with the other services (one UU login)")
-        auth.add_login_args(parser, d)
-
-    p = argparse.ArgumentParser(
-        prog=prog, description="bookings.uu.nl: the University Library's study spaces and rooms")
-    add_global_args(p)
-    common = argparse.ArgumentParser(add_help=False)
-    add_global_args(common, suppress=True)
-
-    sub = p.add_subparsers(dest="cmd", required=True)
-    def cmd(*a, **kw):
-        return sub.add_parser(*a, parents=[common], **kw)
+    p, cmd = common.command_line(
+        prog, "bookings.uu.nl: the University Library's study spaces and rooms")
 
     def when(parser):
         parser.add_argument("place", choices=api.PLACES, metavar="place",
@@ -55,8 +39,8 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
             parser.add_argument(f"--{name}", action="store_true", help=f"Only spaces with {name}"
                                 if name != "accessible" else "Only accessible spaces")
 
-    cmd("login", help="Log in through SURFconext and UU (and keep the session)")
-    sub.add_parser("places", help="The booking pages: study spaces, group spaces, meeting rooms")
+    cmd("login", help="Log in through UU now (same as `uu login bookings`)")
+    cmd("places", login=False, help="The booking pages: study spaces, group spaces, meeting rooms")
     op = cmd("options", help="A page's categories, types of space and zones")
     op.add_argument("place", choices=api.PLACES, metavar="place")
     op.add_argument("--json", action="store_true")
@@ -69,7 +53,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     bo.add_argument("--accept-terms", action="store_true",
                     help="You agree to the page's Terms & Conditions (the library's house rules)")
 
-    li = sub.add_parser("list", help="Your upcoming bookings made with `book` (the site lists none)")
+    li = cmd("list", login=False, help="Your upcoming bookings made with `book` (the site lists none)")
     li.add_argument("--all", action="store_true", help="Also past and cancelled ones")
     li.add_argument("--json", action="store_true")
     sh = cmd("show", help="The bookings on a confirmation, from the email's cancel link")
@@ -81,10 +65,4 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     args = p.parse_args(argv)
     if args.cmd in ("places", "list"):
         sys.exit({"places": cmd_places, "list": cmd_list}[args.cmd](None, args))
-
-    with sync_playwright() as pw:
-        ctx = browser.launch(pw, args.session_dir)
-        try:
-            sys.exit(COMMANDS[args.cmd](ctx, args))
-        finally:
-            browser.save_session(ctx, args.session_dir)
+    common.run(COMMANDS[args.cmd], args)

@@ -9,8 +9,7 @@ import time
 
 from playwright.sync_api import BrowserContext
 
-from uu_cli import auth
-from uu_cli.login import log_in, single_sign_on
+from uu_cli.login import Site, login_to
 from uu_cli.services.bookings import api
 
 TERMS = ("Booking means agreeing to the page's Terms & Conditions: the library's opening hours "
@@ -18,20 +17,16 @@ TERMS = ("Booking means agreeing to the page's Terms & Conditions: the library's
          "Read them, then add --accept-terms.")
 
 
+SITE = Site("bookings.uu.nl", api.LOGIN_URL, api.logged_in)
+
+
 def ensure_login(ctx: BrowserContext, args) -> bool:
     """Log in unless already in; UU asks a code here even while its session lasts (MFA)."""
     if api.logged_in(ctx):
         return True
-    print("[AUTH] Logging in to bookings.uu.nl...", file=sys.stderr)
     token = api.libauth_token(ctx)
     try:
-        if single_sign_on(ctx, api.LOGIN_URL) and api.logged_in(ctx):
-            print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-            return True
-        if not auth.ready_to_login(args):
-            print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-            return False
-        log_in(ctx, api.LOGIN_URL, args, name="bookings.uu.nl")
+        return bool(login_to(ctx, args, SITE))
     except RuntimeError:
         if api.libauth_token(ctx) in (None, token):
             raise

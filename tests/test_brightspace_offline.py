@@ -27,9 +27,9 @@ def run(argv: list[str], capsys) -> tuple[object, str, str]:
 
 @pytest.fixture
 def secret_env(monkeypatch):
-    monkeypatch.setenv("BRIGHTSPACE_SOLISID", SOLISID)
-    monkeypatch.setenv("BRIGHTSPACE_PASSWORD", PASSWORD)
-    monkeypatch.setenv("BRIGHTSPACE_TOTP_SECRET", TOTP_SECRET)
+    monkeypatch.setenv("UU_SOLISID", SOLISID)
+    monkeypatch.setenv("UU_PASSWORD", PASSWORD)
+    monkeypatch.setenv("UU_TOTP_SECRET", TOTP_SECRET)
 
 
 def test_login_with_totp_secret_caches_token(fake_uu, secret_env, capsys):
@@ -43,7 +43,7 @@ def test_login_with_totp_secret_caches_token(fake_uu, secret_env, capsys):
 
 
 def test_login_with_saved_credentials(fake_uu, monkeypatch, capsys):
-    monkeypatch.setenv("BRIGHTSPACE_PASSPHRASE", "long enough passphrase")
+    monkeypatch.setenv("UU_PASSPHRASE", "long enough passphrase")
     save_creds({"solisid": SOLISID, "password": PASSWORD, "totp": TOTP_SECRET},
                "long enough passphrase")
 
@@ -63,13 +63,24 @@ def test_courses_uses_cached_token_without_login(fake_uu, capsys):
     assert fake_uu.logins == 0
 
 
-def test_expired_token_asks_to_log_in_again(fake_uu, capsys):
+def test_expired_token_without_a_way_to_log_in_says_why(fake_uu, capsys):
     api.save_token(make_jwt(time.time() - 600))
 
-    code, _, _ = run(["courses"], capsys)
+    code, _, err = run(["courses"], capsys)
 
-    assert code == api.EXPIRED_MSG
+    assert code == 1
+    assert "The Brightspace token expired, and a login needs" in err
     assert fake_uu.logins == 0
+
+
+def test_expired_token_logs_in_again(fake_uu, secret_env, capsys):
+    api.save_token(make_jwt(time.time() - 600))
+
+    code, out, err = run(["courses"], capsys)
+
+    assert code == 0, err
+    assert "INFOMAI" in out and fake_uu.logins == 1
+    assert json.loads(paths.TOKEN_FILE.read_text())["token"] == fake_uu.token
 
 
 @pytest.mark.parametrize("command, expected", [

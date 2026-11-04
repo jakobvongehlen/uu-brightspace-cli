@@ -12,7 +12,7 @@ import sys
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from uu_cli import paths
+from uu_cli import env, paths
 from uu_cli.auth.totp_secret import totp
 
 # scrypt(passphrase) -> AES-256-GCM over {"solisid","password","totp"}.
@@ -25,8 +25,8 @@ def _creds_key(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
 
 
 def _passphrase(prompt: str = "Credentials passphrase: ") -> str:
-    # BRIGHTSPACE_PASSPHRASE allows non-interactive runs (cron, Docker).
-    return os.environ.get("BRIGHTSPACE_PASSPHRASE") or getpass.getpass(prompt)
+    # UU_PASSPHRASE allows non-interactive runs (cron, Docker).
+    return env.get("UU_PASSPHRASE") or getpass.getpass(prompt)
 
 
 def save_creds(creds: dict, passphrase: str) -> None:
@@ -80,7 +80,7 @@ def cmd_save_creds(args) -> int:
         print("ERROR: Solis-id and password are required.", file=sys.stderr)
         return 1
     passphrase = _passphrase("New passphrase: ")
-    if not os.environ.get("BRIGHTSPACE_PASSPHRASE"):
+    if not env.get("UU_PASSPHRASE"):
         if passphrase != getpass.getpass("Repeat passphrase: "):
             print("ERROR: Passphrases do not match.", file=sys.stderr)
             return 1

@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from urllib.parse import urlencode, urlparse
 
 from playwright.sync_api import BrowserContext, Page
 
-BASE_URL = os.environ.get("KONJOIN_BASE_URL", "https://uu.konjoin.nl").rstrip("/")
+from uu_cli import env
+
+BASE_URL = env.get("UU_KONJOIN_URL", "https://uu.konjoin.nl").rstrip("/")
 # The identity provider behind the site's own login button: SURFconext, then UU's Solis-id page.
-IDENTITY_PROVIDER = os.environ.get("KONJOIN_IDENTITY_PROVIDER", "2")
+IDENTITY_PROVIDER = env.get("UU_KONJOIN_IDENTITY_PROVIDER", "2")
 LOGIN_URL = f"{BASE_URL}/saml2/login?identity_provider={IDENTITY_PROVIDER}"
 
 
