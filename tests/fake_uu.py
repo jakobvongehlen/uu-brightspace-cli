@@ -29,6 +29,7 @@ GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
 BOOKINGS = "https://bookings.uu.nl"
+LIBAUTH = "https://eu.libauth.com"  # bookings.uu.nl's way to SURFconext
 IDP = "https://login.uu.nl"
 MFA = "https://mfa.uu.nl"  # where UU asks the one-time code
 SOLISID = "1234567"
@@ -47,7 +48,7 @@ ACS = {
     "library": f"{LIBRARY}/Shibboleth.sso/SAML2/POST",
     "edunl": f"{EDUNL}/mellon/postResponse",
     "filesender": f"{FILESENDER}/simplesaml/module.php/saml/sp/saml2-acs.php/default-sp",
-    "bookings": f"{BOOKINGS}/spaces/auth/acs",
+    "bookings": f"{LIBAUTH}/login/saml",
 }
 
 # The services that reach UU's login through SURFconext's institution picker.
@@ -348,6 +349,7 @@ class FakeUU:
         self.edunl_posts: list[dict] = []  # every form edu.nl received
         self.filesender_logins = 0  # completed logins at SURFfilesender
         self.bookings_logins = 0    # completed logins at bookings.uu.nl
+        self.libauth_stalls = False  # LibAuth takes the login, then stays on a page of its own
         self.bookings_searches: list[dict] = []  # the query of every search
         self.bookings_free = [  # what a search finds: name, seat id (rooms have none), eid, zone
             ("3rd floor 3.20 102", "97448", "14886", "3rd floor"),
@@ -388,6 +390,7 @@ class FakeUU:
             EDUNL: self._edunl,
             FILESENDER: self._filesender,
             BOOKINGS: self._bookings,
+            LIBAUTH: self._libauth,
         }.get(origin)
         if handler:
             handler(route, req, url)
@@ -697,11 +700,11 @@ class FakeUU:
     def _bookings(self, route, req, url) -> None:
         path, query = url.path, parse_qs(url.query)
         logged_in = "lc_session=" in _cookies(req)
-        if path == urlparse(ACS["bookings"]).path:
+        if path == "/libauth/return":  # LibAuth sends you back logged in
             self.bookings_logins += 1
             return _redirect(route, f"{BOOKINGS}/reserve/UBUSPseats", cookie="lc_session=s1; Path=/")
-        if not logged_in:  # through LibAuth to SURFconext, which picks UU
-            return _redirect(route, f"{SURFCONEXT}/authentication/idp/single-sign-on?sp=bookings")
+        if not logged_in:
+            return _redirect(route, f"{LIBAUTH}/login?app=bookings")
         if path == "/reserve/ash":
             return _html(route, "<title>Whoops! - LibCal</title><h1>Whoops!</h1>")
         if path.startswith("/reserve/"):
@@ -733,6 +736,20 @@ class FakeUU:
         if path == "/ajax/equipment/cart/remove" and req.method == "POST":
             self.bookings_released.append({k: v[0] for k, v in parse_qs(req.post_data or "").items()})
             return _json(route, {"count": 0})
+        route.fulfill(status=404, body="not found")
+
+    def _libauth(self, route, req, url) -> None:
+        """LibAuth: to SURFconext, which picks UU, unless it has your login already."""
+        if url.path == "/login" and "SimpleSAMLAuthToken=" in _cookies(req):
+            return _redirect(route, f"{BOOKINGS}/libauth/return")
+        if url.path == "/login":
+            return _redirect(route, f"{SURFCONEXT}/authentication/idp/single-sign-on?sp=bookings")
+        if url.path == "/login/saml":  # SURFconext sends it your login
+            token = f"SimpleSAMLAuthToken={time.monotonic_ns()}; Path=/"  # new for each login
+            if self.libauth_stalls:
+                return route.fulfill(status=200, body="<!doctype html><p>Logging you in...</p>",
+                                     headers={"Content-Type": "text/html", "Set-Cookie": token})
+            return _redirect(route, f"{BOOKINGS}/libauth/return", cookie=token)
         route.fulfill(status=404, body="not found")
 
     def _bookings_search(self, route, path, query) -> None:

@@ -10,6 +10,9 @@ while its session lasts. The CLI uses the pages you use, as seen on 24-10-2026:
   minutes and shows the booking form: your name and email, filled in from your login, and a
   terms box. Submitting it (/ajax/equipment/checkout) makes the booking.
 - /ajax/equipment/cart/remove gives a held space back.
+- LibAuth (eu.libauth.com) sits between the pages and SURFconext. Once SURFconext sends it your
+  login (/login/saml) it sets SimpleSAMLAuthToken and sends you back to the page. It has been
+  seen to stop on that page instead; its new cookie still says the login went through.
 - There is no page with your bookings. The confirmation email links to
   /equipment/cancel?id=<code>, which lists that checkout's bookings, each with a Cancel
   button that posts to /ajax/equipment/cancel/<code>/<booking id>. The code is only in the
@@ -44,6 +47,9 @@ PLACES = {
     "ash": "Working spaces, Adam Smith Hall (REBO staff only)",
 }
 LOGIN_URL = f"{BASE_URL}/reserve/UBUSPseats"
+
+# LibAuth's cookie for your login, set anew each time SURFconext sends one.
+LIBAUTH_TOKEN = "SimpleSAMLAuthToken"
 
 # The type of space (capacity) each page is for. The search form requires one, and its own
 # default ("select a space") finds nothing.
@@ -133,7 +139,8 @@ def open_page(ctx: BrowserContext, url: str) -> Page:
     deadline = time.monotonic() + SETTLE_S
     while time.monotonic() < deadline:
         try:
-            if urlparse(page.url).hostname != HOST:
+            host = urlparse(page.url).hostname or ""
+            if host != HOST and not host.endswith("libauth.com"):  # LibAuth may send us back
                 raise NotLoggedIn(url)
             if page.locator(".s-lc-libauth-logout").count():
                 return page
@@ -151,6 +158,12 @@ def logged_in(ctx: BrowserContext) -> bool:
         return True
     except NotLoggedIn:
         return False
+
+
+def libauth_token(ctx: BrowserContext) -> str | None:
+    """LibAuth's login cookie, if it has one; a new value means a new login."""
+    return next((c["value"] for c in ctx.cookies()
+                 if c["name"] == LIBAUTH_TOKEN and c["domain"].endswith("libauth.com")), None)
 
 
 def options(ctx: BrowserContext, place: str) -> dict:

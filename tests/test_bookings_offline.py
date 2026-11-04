@@ -9,7 +9,7 @@ import pyotp
 import pytest
 
 from fake_uu import PASSWORD, SOLISID, TOTP_SECRET
-from uu_cli import auth
+from uu_cli import auth, login
 from uu_cli.services.bookings import commands
 from uu_cli.services.bookings.cli import main as bookings
 from uu_cli.services.brightspace.cli import main as brightspace
@@ -80,6 +80,32 @@ def test_the_code_is_asked_even_while_logged_in_at_uu(fake_uu, at_terminal, monk
 
     assert code == 0, err
     assert "wants a code too" in err and len(fake_uu.codes) == 2
+
+
+@pytest.mark.browser
+def test_libauth_stopping_after_single_sign_on_still_logs_in(fake_uu, at_terminal, monkeypatch,
+                                                             capsys):
+    run(brightspace, ["login"], capsys)
+    fake_uu.step_up.clear()  # UU lets you through without a code
+    fake_uu.libauth_stalls = True
+    monkeypatch.setattr(login._reach_login_form, "__defaults__", (2,))  # no UU form will come
+
+    code, _, err = run(bookings, ["login"], capsys)
+
+    assert code == 0, err
+    assert "LibAuth stopped on its own page" in err and fake_uu.bookings_logins == 1
+
+
+@pytest.mark.browser
+def test_libauth_stopping_after_the_code_still_logs_in(fake_uu, at_terminal, monkeypatch, capsys):
+    fake_uu.libauth_stalls = True
+    monkeypatch.setattr(login._wait_for_service, "__defaults__", (2,))  # it won't come back
+
+    code, _, err = run(bookings, ["login"], capsys)
+
+    assert code == 0, err
+    assert "LibAuth stopped on its own page" in err and len(fake_uu.codes) == 1
+    assert fake_uu.bookings_logins == 1
 
 
 @pytest.mark.browser
