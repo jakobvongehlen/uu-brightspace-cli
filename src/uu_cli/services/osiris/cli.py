@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from uu_cli.services.osiris import api
+from uu_cli import auth, paths
+from uu_cli.services.osiris import api, student
 from uu_cli.services.osiris.commands import cmd_filters, cmd_search, cmd_show
 
 COMMANDS = {
@@ -13,6 +14,24 @@ COMMANDS = {
     "show": cmd_show,
     "filters": cmd_filters,
 }
+
+# Commands on your own Osiris Student: in the browser, logged in.
+BROWSER_COMMANDS = {
+    "login": lambda ctx, args: 0 if student.ensure_login(ctx, args) else 1,
+}
+
+
+def _in_browser(fn, args) -> int:
+    from playwright.sync_api import sync_playwright
+
+    from uu_cli import browser
+    paths.ensure_state_dirs()
+    with sync_playwright() as pw:
+        ctx = browser.launch(pw, args.session_dir)
+        try:
+            return fn(ctx, args)
+        finally:
+            browser.save_session(ctx, args.session_dir)
 
 
 def main(argv: list[str] | None = None, prog: str | None = None) -> None:
@@ -43,9 +62,18 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     sub.add_parser("filters", parents=[common], help="The values --faculty, --level, --period, "
                                                     "--timeslot, --language and --type take")
 
+    # Your own Osiris Student, logged in with your Solis-id, in the browser the other services share.
+    logged_in = argparse.ArgumentParser(add_help=False)
+    logged_in.add_argument("--session-dir", default=str(paths.SESSION_DIR),
+                           help="Browser profile, shared with the other services (one UU login)")
+    auth.add_login_args(logged_in, lambda v: v)
+    sub.add_parser("login", parents=[logged_in], help="Log in to Osiris Student with your Solis-id")
+
     args = p.parse_args(argv)
     if args.cmd == "search" and not 1 <= args.limit <= 1000:
         p.error("--limit must be 1 to 1000")
+    if args.cmd in BROWSER_COMMANDS:
+        sys.exit(_in_browser(BROWSER_COMMANDS[args.cmd], args))
     try:
         sys.exit(COMMANDS[args.cmd](args))
     except api.OsirisError as err:
