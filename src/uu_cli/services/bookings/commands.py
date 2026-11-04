@@ -23,13 +23,20 @@ def ensure_login(ctx: BrowserContext, args) -> bool:
     if api.logged_in(ctx):
         return True
     print("[AUTH] Logging in to bookings.uu.nl...", file=sys.stderr)
-    if single_sign_on(ctx, api.LOGIN_URL) and api.logged_in(ctx):
-        print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
-        return True
-    if not auth.ready_to_login(args):
-        print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
-        return False
-    log_in(ctx, api.LOGIN_URL, args, name="bookings.uu.nl")
+    token = api.libauth_token(ctx)
+    try:
+        if single_sign_on(ctx, api.LOGIN_URL) and api.logged_in(ctx):
+            print("[AUTH] ✓ Logged in with your existing UU session.", file=sys.stderr)
+            return True
+        if not auth.ready_to_login(args):
+            print(f"ERROR: Cannot log in: {auth.CANNOT_LOGIN}.", file=sys.stderr)
+            return False
+        log_in(ctx, api.LOGIN_URL, args, name="bookings.uu.nl")
+    except RuntimeError:
+        if api.libauth_token(ctx) in (None, token):
+            raise
+        # LibAuth stopped on its own page, but only after it took the login (api's docstring)
+        print("[AUTH] LibAuth stopped on its own page, but has your login.", file=sys.stderr)
     return api.logged_in(ctx)
 
 
