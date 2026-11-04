@@ -24,6 +24,8 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   people for a short while, optionally encrypted, and lists your transfers.
 - **[Bookings](https://bookings.uu.nl)** (`uu bookings`): the University Library's study spaces
   and group rooms. Finds free spaces for a date and time, and books one.
+- **[Remindo](https://remindo.uu.nl)** (`uu remindo`): UU's digital exam environment. Lists
+  your upcoming exams and practices and your results, and shows a result question by question.
 - **[Osiris course catalogue](https://osiris-student.uu.nl/onderwijscatalogus/extern/cursus)**
   (`uu osiris`): searches UU's courses by code, name, faculty, level, period, timeslot or
   lecturer, and shows a course's page. No login needed.
@@ -50,7 +52,7 @@ Headless CLI for Utrecht University platforms, logged in with your Solis-id:
   hasn't been tried yet.
 - **UU only.** The login flow is written for UU's Solis-id login page.
 - **Can break** if UU, D2L, SURFconext, Konjoin, UU's library proxy, GitLab, edu.nl,
-  SURFfilesender, bookings.uu.nl or Osiris change their pages.
+  SURFfilesender, bookings.uu.nl, Remindo or Osiris change their pages.
 
 ## Install
 
@@ -400,6 +402,42 @@ uu bookings cancel '<cancel link>'       # Cancel all of it, or one with --booki
 
 Optional: `UU_BOOKINGS_URL`.
 
+### Remindo
+
+```sh
+uu remindo agenda                          # Upcoming exams and practices
+uu remindo results                         # Your attempts, with their ids
+uu remindo results --type exam             # Only exams (or graded, practice)
+uu remindo result 5167578                  # One result: overview and each question's status
+uu remindo result 5167578 --questions      # Every question, your answer and the correct one
+uu remindo export 5167578 --out ~/learning # Save it as text and JSON, with its images
+uu remindo export --all --out ~/learning   # Every result you may view, a folder per course
+uu remindo results --new                   # Only what's new or changed since the last --new
+uu remindo page /dashboard                 # Any other Remindo page, as text
+```
+
+[Remindo](https://remindo.uu.nl) is where UU's digital exams and practice tests run. Its login
+goes through Paragin's broker (remindoconnect.com) straight to UU's Solis-id page, so it shares
+the UU session with Brightspace and the others.
+
+- **Results you may view:** Remindo decides per test. `results` marks the ones without a details
+  link, and `result` says so for those it won't show. Some tests show only part of the questions
+  (e.g. only the ones you got wrong); `result` says when.
+- **Questions:** `--questions` prints each question as text: `→` marks your answer and `✓` the
+  correct one; matching questions list each pair. Images show as their link.
+- **Export:** `export` saves a result as `.txt` (as `--questions` prints it) and `.json` into
+  `<out>/<course>/`, and downloads the questions' images into a folder next to them, the text
+  pointing at the files (`--no-images` keeps the links). What's already saved is skipped unless
+  `--force`. `--all` skips the results Remindo shows no details for.
+- **New results:** `results --new` prints only results that are new or changed (a grade or
+  status showing up) since its last run, and nothing otherwise, so it fits a cron job that mails
+  you its output, e.g. `0 */3 * * * uu remindo results --new`. The first run only remembers
+  what's there.
+- **Read only:** the CLI doesn't start or take tests. `agenda` prints a practice's Start link to
+  open in your browser.
+
+Optional: `UU_REMINDO_URL`.
+
 ### Osiris course catalogue
 
 ```bash
@@ -452,6 +490,7 @@ src/uu_cli/
                        discussions.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
     bookings/          api.py (LibCal's search and booking pages), commands.py, cli.py
+    remindo/           api.py (the dashboard, results list and result pages), commands.py, cli.py
     filesender/        api.py (the REST API with the login session, encryption),
                        commands.py (the upload page's session tokens), cli.py
     gitlab/            api.py (/api/v4 from a GitLab page, with its CSRF token),

@@ -18,6 +18,7 @@ SERVICES = {
     "konjoin": "uu_cli.services.konjoin.cli",
     "library": "uu_cli.services.library.cli",
     "osiris": "uu_cli.services.osiris.cli",
+    "remindo": "uu_cli.services.remindo.cli",
 }
 
 # Old service names that keep working.

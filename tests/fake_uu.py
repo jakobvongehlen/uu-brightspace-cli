@@ -14,6 +14,7 @@ machine. (SURFfilesender's REST API isn't browser traffic: tests/test_filesender
 from __future__ import annotations
 
 import base64
+import html
 import json
 import re
 import time
@@ -30,6 +31,9 @@ EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
 BOOKINGS = "https://bookings.uu.nl"
 LIBAUTH = "https://eu.libauth.com"  # bookings.uu.nl's way to SURFconext
+REMINDO = "https://remindo.uu.nl"
+REMINDOCONNECT = "https://remindoconnect.com"  # Paragin's login broker in front of UU
+REMINDO_FILES = "https://uu.remindotoetsmanager.nl"  # where questions' images live
 IDP = "https://login.uu.nl"
 MFA = "https://mfa.uu.nl"  # where UU asks the one-time code
 SOLISID = "1234567"
@@ -49,6 +53,7 @@ ACS = {
     "edunl": f"{EDUNL}/mellon/postResponse",
     "filesender": f"{FILESENDER}/simplesaml/module.php/saml/sp/saml2-acs.php/default-sp",
     "bookings": f"{LIBAUTH}/login/saml",
+    "remindo": f"{REMINDOCONNECT}/auth/session/s1",
 }
 
 # The services that reach UU's login through SURFconext's institution picker.
@@ -147,6 +152,49 @@ CANCEL_ROW = """<tr id="booking_{id}"><td><img alt=""></td><td>{name}</td><td>si
 
 BOOKING_DONE = """<div class="s-lc-eq-booking-status-msg">Booking Confirmed</div>
 <p>You will receive an email confirmation at the address you gave.</p>"""
+
+# remindo.uu.nl's pages (29-10-2026), cut down to what the CLI reads.
+REMINDO_DASHBOARD = """<div id="content"><h2>Agenda</h2><ul class="agenda">
+<li class="month"><h3>October 2026</h3><table><tbody><tr>
+  <th class="moment_header"><div class="period_title"><span class="day">27</span> <span class="month">Oct</span></div>
+    <div class="seperator">–</div><div class="period_title"><span class="day">08</span> <span class="month">Nov</span></div></th>
+  <td class="moment period"><div class="fright"><a href="/dashboard/moment/start/75826?bl=L2Rhc2hib2FyZA">Start</a></div>
+    <h4>INFOMDSS - Self Assessment</h4><div class="momentinfo"><span class="recipetype">Practice</span>
+    <span class="timespan">Oct 27, 2026, 11:59 PM<br>Nov 8, 2026, 11:59 PM</span></div></td></tr></tbody></table></li>
+<li class="month collapsed"><h3>November 2026</h3><table><tbody>
+  <tr><th class="moment_header" rowspan="2"><p class="day_title"><span class="day">09</span> <span class="month">Nov</span></p></th>
+  <td class="moment"><h4>[20261109] INFOMDSS - Data science and society</h4><div class="momentinfo">
+    <span class="recipetype">Exam</span><span class="timespan">1:30 PM – 4:30 PM</span>
+    <span class="location">Chromebooks</span></div></td></tr>
+  <tr><td class="moment"><h4>[20261109] INFOMDIS - Data intensive systems</h4><div class="momentinfo">
+    <span class="recipetype">Exam</span><span class="timespan">6:00 PM – 9:00 PM</span></div></td></tr>
+</tbody></table></li></ul></div>"""
+
+REMINDO_RESULTS = """<div id="content"><ul class="tabletabs"><li class="label">Result 1 - {n} of {n}</li></ul>
+<table class="datatable">{rows}</table></div>"""
+
+REMINDO_RESULT_ROW = """<tbody><tr id="result_{id}"><td>{course}</td><td>{test}</td><td>{start}</td>
+<td><div role="figure" aria-label="{progress}"></div></td><td> – </td><td>Closed</td><td>{view}</td></tr></tbody>"""
+
+# A result's page keeps its data in a single-quoted attribute, as the server sends it.
+REMINDO_RESULT_PAGE = """<div id='app' properties='{props}'></div>"""
+
+# A 1x1 PNG, for a question's image.
+PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                    "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+
+REMINDO_CHOICE = """<div class='qti-choiceInteraction'><ul>
+<li class='qti-simpleChoice-block qti-candidateResponse'><span class='qti-choice-radio'>&nbsp;</span><label><p>M1: Model Layer</p></label></li>
+<li class='qti-simpleChoice-block qti-correctResponse'><span class="qti-points">1 pt.</span><span class='qti-choice-radio'>&nbsp;</span><label><p>M0: Model Instance Layer</p></label></li>
+</ul></div>"""
+
+REMINDO_MATCH = """<div class='qti-matchInteraction'><table class='qti-match-table'>
+<tr><td>&nbsp;</td><td class="qti-simpleAssociableChoice-target"><p>True</p></td><td class="qti-simpleAssociableChoice-target"><p>False</p></td></tr>
+<tr><td class="qti-simpleAssociableChoice-source"><p>A meta-model is a model</p></td>
+  <td class='qti-simpleAssociableChoice-choice qti-candidateResponse qti-correctResponse'></td><td class='qti-simpleAssociableChoice-choice'></td></tr>
+<tr><td class="qti-simpleAssociableChoice-source"><p>Class diagrams live at M0</p></td>
+  <td class='qti-simpleAssociableChoice-choice qti-candidateResponse'></td><td class='qti-simpleAssociableChoice-choice qti-correctResponse'></td></tr>
+</table></div>"""
 
 HOME = """<h1>My Home</h1>
 <script>localStorage.setItem('D2L.Fetch.Tokens',
@@ -364,6 +412,15 @@ class FakeUU:
                               "from": "10:00 Sunday, October 25, 2026",
                               "to": "11:00 Sunday, October 25, 2026"}]}
         self.bookings_cancelled: list[str] = []  # booking ids cancelled
+        self.remindo_logins = 0  # completed logins at remindo.uu.nl
+        self.remindo_results = {  # tab -> your attempts on it
+            "exam": [{"id": "5177416", "course": "Method engineering (INFOME)",
+                      "test": "[20260623] INFOME - 4 - USP", "start": "Jun 23, 2026, 8:31 AM",
+                      "progress": "Questions answered: 30", "viewable": False}],
+            "graded practice": [{"id": "5167578", "course": "Method engineering (INFOME)",
+                                 "test": "[practice exam] INFOME", "start": "Jun 15, 2026, 6:48 PM",
+                                 "progress": "Number of questions answered correctly: 1", "viewable": True}],
+            "practice": []}
         self.filesender_terms = False  # SURFfilesender's one-time terms page was accepted
         self.step_up: set[str] = {"bookings"}  # services UU asks a code for even while you're logged in
         self.asks_code = True       # UU asks a code after the password (it doesn't for edu.nl)
@@ -391,6 +448,9 @@ class FakeUU:
             FILESENDER: self._filesender,
             BOOKINGS: self._bookings,
             LIBAUTH: self._libauth,
+            REMINDO: self._remindo,
+            REMINDOCONNECT: self._remindoconnect,
+            REMINDO_FILES: self._remindo_files,
         }.get(origin)
         if handler:
             handler(route, req, url)
@@ -763,6 +823,61 @@ class FakeUU:
                 BOOKING_RESULT.format(name=n, seat=sid, eid=eid, zone=z, day=day, start=start, end=end)
                 for n, sid, eid, z in found) + "</div>"
         return _html(route, BOOKING_SEARCH.format(page=path.rsplit("/", 1)[1]) + results)
+
+
+    # ── Remindo, through Paragin's broker remindoconnect.com ──────────────────
+    SSO = "/sso/auth/320-solisid_universiteit_utrecht"
+
+    def _remindo(self, route, req, url) -> None:
+        if url.path == self.SSO and "data=" in url.query:  # back from the broker
+            self.remindo_logins += 1
+            return _redirect(route, f"{REMINDO}/", cookie="remindo_session=s1; Path=/")
+        if url.path == self.SSO:
+            return _redirect(route, f"{REMINDOCONNECT}/auth/abc/320-solisid_universiteit_utrecht")
+        if url.path == "/login":
+            return _html(route, f'<div id="content"><a href="{self.SSO}">Inloggen met Solis-ID</a></div>')
+        if "remindo_session=" not in _cookies(req):
+            return _redirect(route, f"{REMINDO}/login")
+        if url.path == "/":
+            return _redirect(route, f"{REMINDO}/dashboard")
+        if url.path == "/dashboard":
+            return _html(route, REMINDO_DASHBOARD)
+        if url.path.rstrip("/") == "/results/list":
+            rows = self.remindo_results[parse_qs(url.query).get("tab", ["exam"])[0]]
+            return _html(route, REMINDO_RESULTS.format(n=len(rows), rows="".join(
+                REMINDO_RESULT_ROW.format(**r, view=f'<a href="/results/view/{r["id"]}">Result details</a>'
+                                          if r["viewable"] else "") for r in rows)))
+        if url.path == "/results/view/5167578":
+            props = {"itemResults": {"901": {"id": 901, "questionNumber": 1, "status": "incorrect"},
+                                     "902": {"id": 902, "questionNumber": 2, "status": "mostly-correct"}},
+                     "menuOptions": {"recipe": {"name": "[practice exam] INFOME", "type": "graded practice"},
+                                     "study": {"name": "Method engineering (INFOME)"},
+                                     "result": {"startTime": "2026-06-15 18:48:16", "endTime": "2026-06-15 20:14:25",
+                                                "status": "closed", "progressBarValues": {
+                                                    "answered": 2, "mostlyCorrect": 1, "incorrect": 1, "total": 2}}}}
+            return _html(route, REMINDO_RESULT_PAGE.format(props=html.escape(json.dumps(props))))
+        if url.path.startswith("/results/view/"):  # viewing disabled: Remindo shows a notice instead
+            return _html(route, '<div id="content"><p>Viewing this result has been disabled.</p></div>')
+        if url.path in ("/api/v2/itemresult/901/block", "/api/v2/itemresult/902/block"):
+            choice = url.path.endswith("901/block")
+            block = {"type": "interaction",
+                     "class": "Qti\\Interaction\\Simple\\" + ("ChoiceInteraction" if choice else "MatchInteraction"),
+                     "prompt": "<div class='qti-prompt'>" + ("A Customer object belongs to:"
+                                                              f"<img src='{REMINDO_FILES}/files/1/m.png'>"
+                                                              if choice else "True or false?") + "</div>",
+                     "html": REMINDO_CHOICE if choice else REMINDO_MATCH}
+            return _json(route, {"success": True, "data": {"content": {"success": True, "blocks": [block]}}})
+        route.fulfill(status=404, body="not found")
+
+    def _remindo_files(self, route, req, url) -> None:
+        if url.path == "/files/1/m.png":
+            return route.fulfill(status=200, body=PNG, headers={"Content-Type": "image/png"})
+        route.fulfill(status=404, body="not found")
+
+    def _remindoconnect(self, route, req, url) -> None:
+        if url.path == urlparse(ACS["remindo"]).path:
+            return _redirect(route, f"{REMINDO}{self.SSO}?data=signed&signature=x")
+        return _redirect(route, f"{IDP}/nidp/app/login?sp=remindo")
 
 
 def _by_hand(values: dict) -> str:
