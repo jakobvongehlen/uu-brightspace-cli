@@ -14,7 +14,8 @@ used at UU, and how it can be reached, before building on it.
   collects as `.ics`, on its own or merged with the timetable feed.
 - [ ] **What's new across all courses** (`uu brightspace digest`): new files,
   announcements, grades and deadlines since the last run. Suited to a daily cron job
-  that sends an email or chat notification.
+  that sends an email or chat notification. Announcements are done:
+  `uu brightspace news --all-courses --since <date>`.
 
 ## Useful, and fairly easy
 

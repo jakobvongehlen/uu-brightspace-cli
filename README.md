@@ -183,10 +183,11 @@ uu brightspace sync-all -o out                # Download every course
 uu brightspace sync-all --dry-run             # Preview without downloading
 uu brightspace deadlines                      # Upcoming deadlines
 uu brightspace discussions                    # The forums, thread by thread
+uu brightspace news --all-courses --since 2026-11-01   # Announcements of every course
 uu brightspace assignments | grades | news | toc | schedule
 ```
 
-All commands except `login`, `courses` and `sync-all` need a course's org-unit id:
+All commands except `login`, `courses`, `sync-all` and `news --all-courses` need a course's org-unit id:
 pass `--org-unit <id>` (find ids with `courses`) or set `UU_BRIGHTSPACE_ORG_UNIT`.
 Run with `--help` for all options. Optional: `UU_BRIGHTSPACE_URL`.
 
@@ -202,6 +203,17 @@ are only counted, not downloaded. `sync` saves the same in the course folder, a 
 in `_discussions/<forum>/<topic>.md`, and everything the API returned in
 `_discussions/discussions.json`. These are rewritten on every sync, since threads grow. If
 the forums can't be fetched, sync says so and goes on.
+
+`news` prints a course's announcements; `--all-courses` prints every enrolled course's
+(course offerings, as `sync-all` picks them) in one run, with one browser and one login.
+`--since YYYY-MM-DD` keeps those posted on or after that day. `--json` prints each
+announcement as `{org_unit, course, date, title, text, attachments}`: `course` is
+"<code> <name>", `date` is `YYYY-MM-DD`, `text` the whole text and `attachments` the files'
+names. For one course that's a list; with `--all-courses` it is
+`{"since": ..., "courses": <how many>, "items": [...], "failed": {<org-unit>: <why>}}`,
+the items newest first. A course whose announcements can't be read is put in `failed` (and
+on stderr) and the others still come: the exit status is 0 unless the course list itself
+couldn't be read.
 
 ### Konjoin
 
@@ -509,7 +521,7 @@ src/uu_cli/
     common.py          what every service's cli.py shares: the login options on its command
                        line, and the browser a command runs in
     brightspace/       api.py (token, /d2l/api), commands.py, sync.py, sheets.py,
-                       discussions.py, cli.py
+                       discussions.py, news.py, cli.py
     edunl/             api.py (the /manage/ form and overview, no API), commands.py, cli.py
     bookings/          api.py (LibCal's search and booking pages), commands.py, cli.py
     remindo/           api.py (the dashboard, results list and result pages), commands.py, cli.py
