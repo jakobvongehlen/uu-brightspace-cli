@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from fake_uu import COURSE_NAME, ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
+from fake_uu import API, COURSE_NAME, ENROLLMENT, ORG_UNIT, PASSWORD, PDF, SOLISID, TOTP_SECRET, make_jwt
 from uu_cli import paths
 from uu_cli.auth.credentials import save_creds
 from uu_cli.services.brightspace import api, sync
@@ -158,3 +158,70 @@ def test_sync_all_dry_run_lists_only_course_offerings(fake_uu, capsys):
     assert code == 0
     assert "INFOMAI" in out and "GRP-1" not in out
     assert "1 course(s) would be synced." in out
+
+
+@pytest.fixture
+def three_courses(monkeypatch):
+    """Two more courses beside the fake's: one with announcements, one whose announcements fail."""
+    enrollments = "/d2l/api/lp/1.43/enrollments/myenrollments/"
+    monkeypatch.setitem(API, enrollments, {"Items": [
+        *API[enrollments]["Items"],
+        {"OrgUnit": {"Id": 5151, "Code": "INFOMDIS", "Name": "Data intensive systems", "Type": {"Id": 3}}},
+        {"OrgUnit": {"Id": 6161, "Code": "", "Name": "A course whose news is off", "Type": {"Id": 3}}},
+    ]})
+    # No route for 6161's news: the fake answers 404, as Brightspace does for a tool that's off.
+    monkeypatch.setitem(API, "/d2l/api/le/1.57/5151/news/", [
+        {"Title": "Welcome", "IsPublished": True, "CreatedDate": "2026-09-01T08:00:00.000Z",
+         "Body": {"Text": "Welcome to the course.", "Html": ""}, "Attachments": []},
+        {"Title": "Exam room", "IsPublished": True, "CreatedDate": "2026-11-03T12:00:00.000Z",
+         "Body": {"Text": "", "Html": "<p>The exam is in <b>EDUC Alfa</b>.</p><p>Bring ID.</p>"},
+         "Attachments": [{"FileId": 1, "FileName": "rooms.pdf", "Size": 10}]},
+    ])
+
+
+def test_news_of_every_course_in_one_run(fake_uu, secret_env, three_courses, capsys):
+    code, out, err = run(["news", "--all-courses", "--since=2026-10-01", "--json"], capsys)
+
+    assert code == 0, err
+    found = json.loads(out)
+    assert found == {"since": "2026-10-01", "courses": 3, "items": [
+        {"org_unit": "5151", "course": "INFOMDIS Data intensive systems", "date": "2026-11-03",
+         "title": "Exam room", "text": "The exam is in EDUC Alfa.\n\nBring ID.", "attachments": ["rooms.pdf"]},
+        {"org_unit": ORG_UNIT, "course": f"INFOMAI {COURSE_NAME}", "date": "2026-10-15",
+         "title": "Room change", "text": "Lecture moves to Ruppert 040.", "attachments": []},
+    ], "failed": {"6161": "Brightspace answered 404: Not found"}}
+    assert "[NEWS] 6161: Brightspace answered 404" in err
+    assert fake_uu.logins == 1  # one login, one browser, for every course
+
+
+def test_news_of_every_course_as_text(fake_uu, three_courses, capsys):
+    api.save_token(fake_uu.token)
+
+    code, out, _ = run(["news", "--all-courses", "--since", "2026-10-01"], capsys)
+
+    assert code == 0
+    assert "── INFOMDIS Data intensive systems\n\n★ [2026-11-03] Exam room" in out
+    assert "📎 Attachments: rooms.pdf" in out and "Room change" in out and "Welcome" not in out
+    assert "Could not read the announcements of 1 course(s): 6161." in out
+
+
+def test_news_of_one_course_since_a_date(fake_uu, capsys):
+    api.save_token(fake_uu.token)
+
+    code, out, _ = run(["news", "--org-unit", ORG_UNIT, "--since=2026-10-15", "--json"], capsys)
+    assert code == 0
+    assert json.loads(out) == [{"org_unit": ORG_UNIT, "course": f"INFOMAI {COURSE_NAME}",
+                                "date": "2026-10-15", "title": "Room change",
+                                "text": "Lecture moves to Ruppert 040.", "attachments": []}]
+
+    code, out, _ = run(["news", "--org-unit", ORG_UNIT, "--since=2026-10-16"], capsys)
+    assert code == 0 and out == "No announcements found.\n"
+
+
+def test_news_of_a_course_that_fails_says_so(fake_uu, capsys):
+    api.save_token(fake_uu.token)
+
+    code, out, err = run(["news", "--org-unit", "6161"], capsys)
+
+    assert code == 1 and out == ""
+    assert "Announcements of 6161: Brightspace answered 404: Not found" in err

@@ -73,3 +73,15 @@ def test_totp_flag_rejects_a_six_digit_code(state):
 
     assert result.returncode == 2
     assert "expects your TOTP secret key" in result.stderr
+
+
+@pytest.mark.parametrize("args, says", [
+    (["news", "--all-courses", "--since=1 Nov"], "invalid date (YYYY-MM-DD) value: '1 Nov'"),
+    (["news", "--all-courses", "--since=2026-13-01"], "invalid date (YYYY-MM-DD) value"),
+    (["news", "--since=2026-11-01"], "--org-unit or UU_BRIGHTSPACE_ORG_UNIT required"),
+])
+def test_news_options_are_checked_before_anything_runs(state, args, says):
+    result = cli("-m", "uu_cli", "brightspace", *args, state=state)
+
+    assert result.returncode == 2  # argparse's: what Doorman takes as "this uu can't do that"
+    assert says in result.stderr
