@@ -9,10 +9,10 @@ from uu_cli.auth.credentials import cmd_save_creds
 from uu_cli.services import common
 from uu_cli.services.brightspace.api import save_token
 from uu_cli.services.brightspace.commands import (
-    cmd_assignments, cmd_courses, cmd_deadlines, cmd_grades, cmd_login, cmd_news,
-    cmd_schedule, cmd_toc,
+    cmd_assignments, cmd_courses, cmd_deadlines, cmd_grades, cmd_login, cmd_schedule, cmd_toc,
 )
 from uu_cli.services.brightspace.discussions import cmd_discussions
+from uu_cli.services.brightspace.news import cmd_news, since_date
 from uu_cli.services.brightspace.sync import cmd_sync, cmd_sync_all
 
 COMMANDS = {
@@ -54,7 +54,14 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
     course(cmd("toc",          help="Show course TOC"))
     course(cmd("assignments",  help="List assignments (dropbox + LTI links)"))
     course(cmd("grades",       help="Show grades"))
-    course(cmd("news",         help="Show announcements"))
+    news = course(cmd("news",  help="Show announcements: one course's, or every course's"))
+    news.add_argument("--all-courses", action="store_true",
+                      help="Every enrolled course's announcements, in one run (no --org-unit)")
+    news.add_argument("--since", type=since_date, default=None, metavar="YYYY-MM-DD",
+                      help="Only announcements from this date on")
+    news.add_argument("--json", action="store_true",
+                      help="Print JSON: a list of announcements, or with --all-courses "
+                           "{since, courses, items, failed}")
     course(cmd("discussions",  help="Show the discussion forums, thread by thread"))
     sch = course(cmd("schedule",     help="Download Google Sheets from course content"))
     sch.add_argument("-o", "--output",   default=None)
@@ -71,7 +78,8 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> None:
 
     if args.cmd == "save-creds":
         sys.exit(cmd_save_creds(args))
-    if args.cmd not in ("login", "courses", "sync-all") and not args.org_unit:
+    every_course = args.cmd == "sync-all" or getattr(args, "all_courses", False)
+    if args.cmd not in ("login", "courses") and not every_course and not args.org_unit:
         p.error("--org-unit or UU_BRIGHTSPACE_ORG_UNIT required for content commands")
     common.run(_run, args)
 

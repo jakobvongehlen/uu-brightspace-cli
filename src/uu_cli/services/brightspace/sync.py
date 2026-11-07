@@ -14,7 +14,7 @@ from playwright.sync_api import BrowserContext, Page
 
 from uu_cli import paths
 from uu_cli.paths import safe_filename
-from uu_cli.services.brightspace.api import BASE_URL, api_fetch, get_token
+from uu_cli.services.brightspace.api import BASE_URL, api_fetch, enrolled_courses, get_token
 from uu_cli.services.brightspace.discussions import save_discussions
 from uu_cli.services.brightspace.sheets import download_google_sheet, extract_google_sheets_urls
 
@@ -66,31 +66,10 @@ def cmd_sync_all(ctx: BrowserContext, args) -> int:
     token = get_token(ctx, args)
     if not token:
         return 1
-    data = api_fetch(ctx,
-        f"{BASE_URL}/d2l/api/lp/1.43/enrollments/myenrollments/", token)
-    items = data.get("Items") if isinstance(data, dict) else data
-    if not isinstance(items, list):
+    courses = enrolled_courses(ctx, token)
+    if courses is None:
         print("[SYNC-ALL] Enrollment fetch failed or returned invalid data.", file=sys.stderr)
         return 1
-
-    courses = []
-    seen = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        org = item.get("OrgUnit")
-        if not isinstance(org, dict):
-            continue
-        org_type = org.get("Type")
-        if not isinstance(org_type, dict) or org_type.get("Id") != 3:
-            continue
-        if org.get("Id") is None:
-            continue
-        ou = str(org["Id"])
-        if ou in seen:
-            continue
-        seen.add(ou)
-        courses.append((ou, org))
 
     if args.dry_run:
         print(f"\n{'Code':<12} {'Name':<45} {'OrgUnitId'}")

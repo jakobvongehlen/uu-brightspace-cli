@@ -1,4 +1,4 @@
-"""Brightspace commands that read course data: login, courses, toc, assignments, grades, news, schedule, deadlines."""
+"""Brightspace commands that read course data: login, courses, toc, assignments, grades, schedule, deadlines."""
 
 from __future__ import annotations
 
@@ -129,53 +129,6 @@ def cmd_grades(ctx: BrowserContext, args) -> int:
             continue
         print(f"  {item.get('DisplayName','?'):<40} "
               f"{item.get('WeightedNumerator','?')}/{item.get('WeightedDenominator','?')}")
-    return 0
-
-
-def cmd_news(ctx: BrowserContext, args) -> int:
-    """Fetch and display announcements. Handles both list and dict responses."""
-    token = get_token(ctx, args)
-    if not token:
-        return 1
-    ou = args.org_unit
-    data = api_fetch(ctx, f"{BASE_URL}/d2l/api/le/1.57/{ou}/news/", token)
-
-    # Guard: news API can return a dict with Items or a raw list
-    items: list = []
-    if data is None:
-        pass
-    elif isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        items = data.get("Items", data.get("News", []))
-
-    if not items:
-        print("No announcements found.")
-        return 0
-
-    for item in items:
-        if not isinstance(item, dict):
-            print(f"  [raw] {item}")
-            continue
-        star = "★" if item.get("IsPublished") else "○"
-        title = item.get("Title", "untitled")
-        body_raw = item.get("Body", {})
-        if isinstance(body_raw, dict):
-            text = body_raw.get("Text", body_raw.get("Html", ""))[:300]
-        else:
-            text = str(body_raw)[:300]
-        date = (item.get("CreatedDate", "") or "")[:10]
-        print(f"{star} [{date}] {title}")
-        if text:
-            print(f"   {text}")
-        atts = item.get("Attachments")
-        if atts and isinstance(atts, list):
-            names = ", ".join(
-                a.get("FileName", "?") for a in atts
-                if isinstance(a, dict)
-            )
-            print(f"   📎 Attachments: {names}")
-        print()
     return 0
 
 
