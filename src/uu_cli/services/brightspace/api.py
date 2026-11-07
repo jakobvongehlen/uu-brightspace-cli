@@ -111,6 +111,34 @@ def api_fetch(ctx: BrowserContext, url: str, token: str,
     return data
 
 
+def enrolled_courses(ctx: BrowserContext, token: str) -> list[tuple[str, dict]] | None:
+    """(org-unit id, OrgUnit) of every course offering you're enrolled in, without group or team
+    sections; None when the enrollments can't be fetched."""
+    data = api_fetch(ctx, f"{BASE_URL}/d2l/api/lp/1.43/enrollments/myenrollments/", token)
+    items = data.get("Items") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return None
+    courses = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        org = item.get("OrgUnit")
+        if not isinstance(org, dict):
+            continue
+        org_type = org.get("Type")
+        if not isinstance(org_type, dict) or org_type.get("Id") != 3:
+            continue
+        if org.get("Id") is None:
+            continue
+        ou = str(org["Id"])
+        if ou in seen:
+            continue
+        seen.add(ou)
+        courses.append((ou, org))
+    return courses
+
+
 def get_token(ctx: BrowserContext, args, session: bool = False) -> str | None:
     """A live bearer token for /d2l/api/, logging in when there is none; None after saying why not.
 
