@@ -84,31 +84,36 @@ def _extract_token(ctx: BrowserContext) -> str | None:
 def api_fetch(ctx: BrowserContext, url: str, token: str,
               timeout: float = 20000) -> Optional[Any]:
     """GET a Brightspace /d2l/api/ endpoint via Playwright page JS (carries cookies)."""
+    return api_get(ctx, url, token, timeout)[1]
+
+
+def api_get(ctx: BrowserContext, url: str, token: str,
+            timeout: float = 20000) -> tuple[int, Optional[Any]]:
+    """api_fetch, with the HTTP status: 0 when the request itself failed. The JSON is None for
+    an empty answer or one that isn't JSON. A 401 ends the run: the token is no longer taken."""
     page = ctx.pages[0]
     try:
-        data = page.evaluate(f"""
+        answer = page.evaluate(f"""
             async () => {{
                 const r = await fetch(
                     "{url}",
                     {{ headers: {{ "Authorization": "Bearer {token}",
                                    "Accept": "application/json" }} }}
                 );
-                if (r.status === 401) return {{ "__unauthorized__": true }};
                 const text = await r.text();
-                if (r.status === 204 || !text.trim()) return null;
-                try {{
-                    return JSON.parse(text);
-                }} catch {{
-                    return null;
+                let data = null;
+                if (r.status !== 204 && text.trim()) {{
+                    try {{ data = JSON.parse(text); }} catch {{ data = null; }}
                 }}
+                return {{ "status": r.status, "data": data }};
             }}
         """)
     except Exception as e:
         print(f"  ! API {url}: {e}", file=sys.stderr)
-        return None
-    if isinstance(data, dict) and data.get("__unauthorized__"):
+        return 0, None
+    if answer["status"] == 401:
         sys.exit(EXPIRED_MSG)
-    return data
+    return answer["status"], answer["data"]
 
 
 def enrolled_courses(ctx: BrowserContext, token: str) -> list[tuple[str, dict]] | None:
