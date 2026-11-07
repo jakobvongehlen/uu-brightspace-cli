@@ -26,12 +26,17 @@ from uu_cli import browser
 from uu_cli.services.library.articles import doi_of, save_file, save_pdf
 
 PROXY = "https://utrechtuniversity.idm.oclc.org"
+PROXY_HOST = urlparse(PROXY).hostname
 
 # How long the window stays open for you to find the PDF.
 WINDOW_TIMEOUT_S = 900
 
 # How long `get` waits for the PDF it opened before it asks you to open it.
 FETCH_WAIT_S = 30
+
+# How long a tab opened through the proxy's login link gets to move on. The proxy only stays on
+# that link to say it doesn't serve the address.
+LOGIN_WAIT_S = 3
 
 # The PDF an article page names for search engines, as an absolute address.
 CITATION_PDF = """() => {
@@ -71,6 +76,7 @@ def open_article(ctx: BrowserContext, article: str, out_dir: Path, doi: str | No
     saved: list[Path] = []
     others: list[Path] = []  # downloads that aren't a PDF
     fetched_at = 0.0  # when `get` opened the PDF; 0 while it hasn't
+    login_tab: Page | None = None  # the tab that went through the proxy's login link
     try:
         page = window.new_page()
         page.goto(proxy_url(article), wait_until="commit", timeout=60_000)
@@ -91,14 +97,19 @@ def open_article(ctx: BrowserContext, article: str, out_dir: Path, doi: str | No
             pages = [p for p in window.pages if not p.is_closed()]
             if not pages:
                 break
-            if fetch and not fetched_at and (pdf := _citation_pdf(pages)):
+            if fetch and not fetched_at and (named := _citation_pdf(pages)):
+                pdf, page_url = named
                 print(f"[LIBRARY] Opening the article's PDF: {pdf.split('?')[0]}", file=sys.stderr)
-                _open_pdf(window, pdf)
+                login_tab = _open_pdf(window, pdf, page_url)
                 fetched_at = time.monotonic()
             elif fetch and fetched_at and not saved and time.monotonic() > fetched_at + FETCH_WAIT_S:
                 print("[LIBRARY] The PDF didn't come by itself: open or download it in the window.",
                       file=sys.stderr)
                 fetch = False
+            if login_tab and time.monotonic() > fetched_at + LOGIN_WAIT_S:
+                if not saved:  # a PDF that came as a download leaves its tab on the link as well
+                    _close_if_refused(login_tab)
+                login_tab = None
             try:
                 pages[0].wait_for_timeout(250)
             except PlaywrightError:
@@ -128,28 +139,54 @@ def _where(url: str) -> str:
     return f"{parts.netloc}{parts.path}" if parts.netloc else url
 
 
-def _citation_pdf(pages: list[Page]) -> str | None:
-    """The PDF address an open page names in its citation_pdf_url tag, if one does."""
+def _citation_pdf(pages: list[Page]) -> tuple[str, str] | None:
+    """The PDF address an open page names in its citation_pdf_url tag, and that page's address."""
     for page in pages:
         try:
             pdf = page.evaluate(CITATION_PDF)
         except PlaywrightError:
             continue  # on its way to the next page
         if pdf:
-            return pdf
+            return pdf, page.url
     return None
 
 
-def _open_pdf(window: BrowserContext, pdf: str) -> None:
-    """Open pdf in a new tab, through the proxy when the page named the publisher's own address."""
-    host = urlparse(pdf).hostname or ""
-    proxy = urlparse(PROXY).hostname
-    if host != proxy and not host.endswith(f".{proxy}"):
-        pdf = proxy_url(pdf)
+def _through_proxy(url: str) -> bool:
+    """Is url served by the proxy (a publisher's site comes as link-springer-com.utrechtuniversity…)?"""
+    host = urlparse(url).hostname or ""
+    return host == PROXY_HOST or host.endswith(f".{PROXY_HOST}")
+
+
+def _open_pdf(window: BrowserContext, pdf: str, page_url: str) -> Page | None:
+    """Open pdf, named by the page at page_url, in a new tab; the tab, if it took the login link.
+
+    A page outside the proxy names an address the proxy doesn't serve (an open access site: on
+    07-11-2026 MDPI's), so that tab goes there directly. A page through the proxy can name the
+    publisher's own address: that one goes through the proxy's login link.
+    """
+    login = _through_proxy(page_url) and not _through_proxy(pdf)
+    tab = window.new_page()
     try:
-        window.new_page().goto(pdf, wait_until="commit", timeout=60_000)
+        tab.goto(proxy_url(pdf) if login else pdf, wait_until="commit", timeout=60_000)
     except PlaywrightError:
         pass  # a download ends the navigation; the loop saves it, or asks you to take over
+    return tab if login else None
+
+
+def _close_if_refused(tab: Page) -> None:
+    """Close a tab still on the proxy's login link, so you stay on the article and its button.
+
+    Only some time after opening it: right away, a link the proxy serves looks just the same.
+    """
+    here = urlparse(tab.url)
+    if tab.is_closed() or here.hostname != PROXY_HOST or here.path != "/login":
+        return
+    print("[LIBRARY] UU's proxy doesn't serve that PDF's address: download it from the article's "
+          "page.", file=sys.stderr)
+    try:
+        tab.close()
+    except PlaywrightError:
+        pass  # you closed it yourself
 
 
 def _is_pdf(response: Response) -> bool:

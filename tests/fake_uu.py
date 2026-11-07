@@ -27,6 +27,7 @@ BRIGHTSPACE = "https://uu.brightspace.com"
 KONJOIN = "https://uu.konjoin.nl"
 SURFCONEXT = "https://engine.surfconext.nl"
 LIBRARY = "https://utrechtuniversity.idm.oclc.org"
+OPEN_SITE = "https://www.mdpi.com"  # an open access site: the proxy sends you there and steps aside
 GITLAB = "https://git.science.uu.nl"
 EDUNL = "https://edu.nl"
 FILESENDER = "https://filesender.surf.nl"
@@ -418,6 +419,8 @@ class FakeUU:
         self.citation_pdf_url: str | None = "/article/main.pdf"  # the page's tag for search engines
         self.clicks_pdf = True      # you, at the window, click "View PDF" (when by_hand)
         self.clicks_issue = False   # you click "Download full issue" instead
+        self.after_library_login = f"{LIBRARY}/article"  # where the proxy sends you after UU's login
+        self.proxy_refuses = False  # the proxy answers a PDF's login link with its own "not available"
         self.elsewhere: list[str] = []  # requests for hosts this fake doesn't serve (aborted)
         self.gitlab_logins = 0      # completed sign-ins at GitLab
         self.gitlab_two_factor = False  # you turned on GitLab's own two-factor login
@@ -480,6 +483,7 @@ class FakeUU:
             KONJOIN: self._konjoin,
             SURFCONEXT: self._surfconext,
             LIBRARY: lambda *a: self._library(*a, by_hand=by_hand),
+            OPEN_SITE: self._open_site,
             GITLAB: lambda *a: self._gitlab(*a, by_hand=by_hand),
             EDUNL: self._edunl,
             FILESENDER: self._filesender,
@@ -622,6 +626,15 @@ class FakeUU:
             return _json(route, project)
         route.fulfill(status=404, body="not found")
 
+    # ── an open access site, outside the proxy ────────────────────────────────
+    def _open_site(self, route, req, url) -> None:
+        if url.path == "/article":
+            meta = CITATION_PDF.format(url=f"{OPEN_SITE}/article/pdf")
+            return _html(route, ARTICLE.format(meta=meta, pdf="/article/pdf"))
+        if url.path == "/article/pdf":
+            return route.fulfill(status=200, body=ARTICLE_PDF, headers={"Content-Type": "application/pdf"})
+        route.fulfill(status=404, body="not found")
+
     # ── the library proxy (EZproxy) ───────────────────────────────────────────
     def _library(self, route, req, url, by_hand: bool = False) -> None:
         path = url.path
@@ -630,13 +643,15 @@ class FakeUU:
             self.library_links.append(url.query)
             target = urlparse(parse_qs(url.query).get("url", [""])[0])
             if logged_in and target.path.endswith(".pdf"):  # a publisher's PDF, proxied
+                if self.proxy_refuses:
+                    return _html(route, "<h1>This resource is not available</h1>")
                 return _redirect(route, f"{LIBRARY}{target.path}")
             if logged_in:
                 return _redirect(route, f"{LIBRARY}/article")
             return _redirect(route, f"{IDP}/nidp/app/login?sp=library")
         if path == "/Shibboleth.sso/SAML2/POST":
             self.library_logins += 1
-            return _redirect(route, f"{LIBRARY}/article", cookie="ezproxy=l1b; Path=/")
+            return _redirect(route, self.after_library_login, cookie="ezproxy=l1b; Path=/")
         if not logged_in:
             return route.fulfill(status=403, body="not logged in at the proxy")
         if path == "/article":
