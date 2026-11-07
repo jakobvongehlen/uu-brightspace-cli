@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fake_uu import ARTICLE_PDF, ISSUE_ZIP
+from fake_uu import ARTICLE_PDF, ISSUE_ZIP, OPEN_SITE
 from uu_cli.services.brightspace.cli import main as brightspace
 from uu_cli.services.library import articles, elsevier, proxy
 from uu_cli.services.library.cli import main as library
@@ -212,6 +212,44 @@ def test_get_opens_a_publishers_own_pdf_address_through_the_proxy(window, fake_u
     assert (state / "10.1007_978-3-319-75553-3_9.pdf").read_bytes() == ARTICLE_PDF
     assert fake_uu.library_links[-1] == f"auth=uushibboleth&url={fake_uu.citation_pdf_url}"
     assert not any("springer.com" in url for url in fake_uu.elsewhere)  # never past the proxy
+    assert "doesn't serve that PDF's address" not in err
+
+
+@pytest.mark.browser
+def test_get_opens_the_pdf_of_a_site_outside_the_proxy_directly(window, fake_uu, state, capsys):
+    fake_uu.clicks_pdf = False
+    fake_uu.after_library_login = f"{OPEN_SITE}/article"
+
+    code, _, err = run(library, ["get", DOI, "-o", str(state)], capsys)
+
+    assert code == 0, err
+    assert (state / PDF_NAME).read_bytes() == ARTICLE_PDF
+    assert len(fake_uu.library_links) == 1  # the article's: the proxy doesn't serve that site
+
+
+@pytest.mark.browser
+def test_get_closes_the_tab_when_the_proxy_does_not_serve_the_pdf(window, fake_uu, state, monkeypatch,
+                                                                   capsys):
+    fake_uu.clicks_pdf = False
+    fake_uu.proxy_refuses = True
+    fake_uu.citation_pdf_url = "https://journals.example.org/paper.pdf"
+    monkeypatch.setattr(proxy, "FETCH_WAIT_S", 0)
+    monkeypatch.setattr(proxy, "LOGIN_WAIT_S", 0.5)
+    monkeypatch.setattr(proxy, "WINDOW_TIMEOUT_S", 3)
+    tabs = []
+    close_if_refused = proxy._close_if_refused
+
+    def counted(tab):
+        ctx = tab.context
+        close_if_refused(tab)
+        tabs.append(len(ctx.pages))
+
+    monkeypatch.setattr(proxy, "_close_if_refused", counted)
+
+    code, _, err = run(library, ["get", DOI, "-o", str(state)], capsys)
+
+    assert code == 1 and "doesn't serve that PDF's address" in err
+    assert tabs == [1]  # only the article's page, with its download button
 
 
 @pytest.mark.browser
